@@ -41,6 +41,40 @@ export const AppearanceSettings = Schema.Struct({
 }).pipe(Schema.withDecodingDefault(Effect.succeed({})));
 export type AppearanceSettings = typeof AppearanceSettings.Type;
 
+export const NotificationSoundPlaybackPolicy = Schema.Literals(["background", "always", "unseen"]);
+export type NotificationSoundPlaybackPolicy = typeof NotificationSoundPlaybackPolicy.Type;
+
+export const DEFAULT_ATTENTION_NOTIFICATION_SOUND_ID = "minecrat-click";
+export const DEFAULT_COMPLETION_NOTIFICATION_SOUND_ID = "note-block-pling";
+
+export const NotificationSoundAsset = Schema.Struct({
+  id: TrimmedNonEmptyString,
+  label: TrimmedNonEmptyString,
+  source: Schema.Literal("custom"),
+  mimeType: TrimmedNonEmptyString,
+  dataUrl: TrimmedNonEmptyString,
+  sizeBytes: Schema.Number,
+  createdAt: TrimmedNonEmptyString,
+});
+export type NotificationSoundAsset = typeof NotificationSoundAsset.Type;
+
+export const NotificationSoundSettings = Schema.Struct({
+  enabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  playbackPolicy: NotificationSoundPlaybackPolicy.pipe(
+    Schema.withDecodingDefault(Effect.succeed("background" as const)),
+  ),
+  attentionSoundId: TrimmedNonEmptyString.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_ATTENTION_NOTIFICATION_SOUND_ID)),
+  ),
+  completionSoundId: TrimmedNonEmptyString.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_COMPLETION_NOTIFICATION_SOUND_ID)),
+  ),
+  customSounds: Schema.Array(NotificationSoundAsset).pipe(
+    Schema.withDecodingDefault(Effect.succeed([])),
+  ),
+}).pipe(Schema.withDecodingDefault(Effect.succeed({})));
+export type NotificationSoundSettings = typeof NotificationSoundSettings.Type;
+
 export const ClientSettingsSchema = Schema.Struct({
   appearance: AppearanceSettings,
   autoOpenPlanSidebar: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
@@ -72,6 +106,7 @@ export const ClientSettingsSchema = Schema.Struct({
       modelOrder: Schema.Array(Schema.String).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
     }),
   ).pipe(Schema.withDecodingDefault(Effect.succeed({}))),
+  notificationSounds: NotificationSoundSettings,
   sidebarProjectGroupingMode: SidebarProjectGroupingMode.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_SIDEBAR_PROJECT_GROUPING_MODE)),
   ),
@@ -330,6 +365,15 @@ export const ClientSettingsPatch = Schema.Struct({
         ),
       }),
     ),
+  ),
+  notificationSounds: Schema.optionalKey(
+    Schema.Struct({
+      enabled: Schema.optionalKey(Schema.Boolean),
+      playbackPolicy: Schema.optionalKey(NotificationSoundPlaybackPolicy),
+      attentionSoundId: Schema.optionalKey(Schema.String),
+      completionSoundId: Schema.optionalKey(Schema.String),
+      customSounds: Schema.optionalKey(Schema.Array(NotificationSoundAsset)),
+    }),
   ),
   sidebarProjectGroupingMode: Schema.optionalKey(SidebarProjectGroupingMode),
   sidebarProjectGroupingOverrides: Schema.optionalKey(

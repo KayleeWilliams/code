@@ -132,4 +132,109 @@ describe("deriveOrchestrationBatchEffects", () => {
     expect(effects.clearDeletedThreadIds).toEqual([]);
     expect(effects.removeTerminalStateThreadIds).toEqual([]);
   });
+
+  it("derives notification sound events for attention and completion events", () => {
+    const threadId = ThreadId.make("thread-sounds");
+
+    const effects = deriveOrchestrationBatchEffects([
+      makeEvent(
+        "thread.activity-appended",
+        {
+          threadId,
+          activity: {
+            id: EventId.make("activity-approval"),
+            tone: "approval",
+            kind: "approval.requested",
+            summary: "Approval requested",
+            payload: { requestId: "approval-1" },
+            turnId: TurnId.make("turn-1"),
+            sequence: 2,
+            createdAt: "2026-02-27T00:00:01.000Z",
+          },
+        },
+        { sequence: 2 },
+      ),
+      makeEvent(
+        "thread.activity-appended",
+        {
+          threadId,
+          activity: {
+            id: EventId.make("activity-user-input"),
+            tone: "approval",
+            kind: "user-input.requested",
+            summary: "Input requested",
+            payload: { requestId: "input-1" },
+            turnId: TurnId.make("turn-1"),
+            sequence: 3,
+            createdAt: "2026-02-27T00:00:02.000Z",
+          },
+        },
+        { sequence: 3 },
+      ),
+      makeEvent(
+        "thread.turn-diff-completed",
+        {
+          threadId,
+          turnId: TurnId.make("turn-1"),
+          checkpointTurnCount: 1,
+          checkpointRef: CheckpointRef.make("checkpoint-1"),
+          status: "ready",
+          files: [],
+          assistantMessageId: MessageId.make("assistant-1"),
+          completedAt: "2026-02-27T00:00:03.000Z",
+        },
+        { sequence: 4 },
+      ),
+    ]);
+
+    expect(effects.notificationSoundEvents).toEqual([
+      { kind: "attention", threadId, sequence: 2 },
+      { kind: "completion", threadId, sequence: 4 },
+    ]);
+  });
+
+  it("dedupes notification sound events by kind and thread within a batch", () => {
+    const threadId = ThreadId.make("thread-sound-dedupe");
+
+    const effects = deriveOrchestrationBatchEffects([
+      makeEvent(
+        "thread.activity-appended",
+        {
+          threadId,
+          activity: {
+            id: EventId.make("activity-input"),
+            tone: "approval",
+            kind: "user-input.requested",
+            summary: "Input requested",
+            payload: { requestId: "input-1" },
+            turnId: TurnId.make("turn-1"),
+            sequence: 11,
+            createdAt: "2026-02-27T00:00:01.000Z",
+          },
+        },
+        { sequence: 11 },
+      ),
+      makeEvent(
+        "thread.activity-appended",
+        {
+          threadId,
+          activity: {
+            id: EventId.make("activity-approval"),
+            tone: "approval",
+            kind: "approval.requested",
+            summary: "Approval requested",
+            payload: { requestId: "approval-1" },
+            turnId: TurnId.make("turn-1"),
+            sequence: 12,
+            createdAt: "2026-02-27T00:00:02.000Z",
+          },
+        },
+        { sequence: 12 },
+      ),
+    ]);
+
+    expect(effects.notificationSoundEvents).toEqual([
+      { kind: "attention", threadId, sequence: 11 },
+    ]);
+  });
 });

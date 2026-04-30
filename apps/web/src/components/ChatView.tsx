@@ -80,6 +80,7 @@ import {
 } from "../store";
 import { createProjectSelectorByRef, createThreadSelectorByRef } from "../storeSelectors";
 import { useUiStateStore } from "../uiStateStore";
+import { setActiveVisibleThread } from "../activeThreadView";
 import {
   buildPlanImplementationThreadTitle,
   buildPlanImplementationPrompt,
@@ -822,6 +823,10 @@ export default function ChatView(props: ChatViewProps) {
     () => (activeThread ? scopeThreadRef(activeThread.environmentId, activeThread.id) : null),
     [activeThread],
   );
+  useEffect(() => {
+    setActiveVisibleThread(activeThreadRef);
+    return () => setActiveVisibleThread(null);
+  }, [activeThreadRef]);
   const activeThreadKey = activeThreadRef ? scopedThreadKey(activeThreadRef) : null;
   const existingOpenTerminalThreadKeys = useMemo(() => {
     const existingThreadKeys = new Set<string>([...serverThreadKeys, ...draftThreadKeys]);

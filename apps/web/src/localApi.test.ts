@@ -13,6 +13,7 @@ import {
   type TerminalEvent,
   ThreadId,
 } from "@t3tools/contracts";
+import { DEFAULT_CLIENT_SETTINGS } from "@t3tools/contracts/settings";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { ContextMenuItem } from "@t3tools/contracts";
@@ -543,6 +544,7 @@ describe("wsApi", () => {
       confirmThreadDelete: false,
       diffWordWrap: true,
       favorites: [],
+      notificationSounds: DEFAULT_CLIENT_SETTINGS.notificationSounds,
       providerModelPreferences: {},
       sidebarProjectGroupingMode: "repository_path" as const,
       sidebarProjectGroupingOverrides: {
@@ -608,6 +610,7 @@ describe("wsApi", () => {
       confirmThreadDelete: false,
       diffWordWrap: true,
       favorites: [],
+      notificationSounds: DEFAULT_CLIENT_SETTINGS.notificationSounds,
       providerModelPreferences: {},
       sidebarProjectGroupingMode: "repository_path" as const,
       sidebarProjectGroupingOverrides: {

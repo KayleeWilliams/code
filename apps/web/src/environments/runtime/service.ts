@@ -66,6 +66,8 @@ import {
   derivePhysicalProjectKey,
 } from "../../logicalProject";
 import { getClientSettings } from "~/hooks/useSettings";
+import { getActiveVisibleThreadKey } from "~/activeThreadView";
+import { playNotificationSound } from "~/notificationSounds";
 
 type EnvironmentServiceState = {
   readonly queryClient: QueryClient;
@@ -644,6 +646,23 @@ function applyRecoveredEventBatch(
   }
 
   useStore.getState().applyOrchestrationEvents(uiEvents, environmentId);
+  if (batchEffects.notificationSoundEvents.length > 0) {
+    const clientSettings = getClientSettings();
+    const activeVisibleThreadKey = getActiveVisibleThreadKey();
+    for (const soundEvent of batchEffects.notificationSoundEvents) {
+      const eventThreadKey = scopedThreadKey(scopeThreadRef(environmentId, soundEvent.threadId));
+      const isActiveVisibleThread = eventThreadKey === activeVisibleThreadKey;
+      playNotificationSound({
+        kind: soundEvent.kind,
+        settings: clientSettings.notificationSounds,
+        environmentId,
+        threadId: soundEvent.threadId,
+        sequence: soundEvent.sequence,
+        isActiveVisibleThread,
+        createsUnseenStatus: !isActiveVisibleThread,
+      });
+    }
+  }
   if (needsProjectUiSync) {
     const projects = selectProjectsAcrossEnvironments(useStore.getState());
     const clientSettings = getClientSettings();
