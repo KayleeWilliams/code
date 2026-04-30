@@ -2031,6 +2031,7 @@ it.layer(TestLayer)("git integration", (it) => {
           yield* git(remote, ["init", "--bare"]);
 
           yield* initRepoWithCommit(tmp);
+          yield* git(tmp, ["branch", "-M", "main"]);
           yield* git(tmp, ["remote", "add", "origin", remote]);
           yield* git(tmp, ["push", "-u", "origin", "main"]);
 
