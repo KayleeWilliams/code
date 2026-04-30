@@ -36,6 +36,8 @@ const MODE_ARGS = {
 } as const satisfies Record<string, ReadonlyArray<string>>;
 
 type DevMode = keyof typeof MODE_ARGS;
+const DEV_STATE_MODES = ["isolated", "shared"] as const;
+type DevStateMode = (typeof DEV_STATE_MODES)[number];
 type PortAvailabilityCheck<R = never> = (port: number) => Effect.Effect<boolean, never, R>;
 
 const DEV_RUNNER_MODES = Object.keys(MODE_ARGS) as Array<DevMode>;
@@ -67,6 +69,11 @@ const optionalIntegerConfig = (name: string): Config.Config<number | undefined> 
   );
 const optionalUrlConfig = (name: string): Config.Config<URL | undefined> =>
   Config.url(name).pipe(
+    Config.option,
+    Config.map((value) => Option.getOrUndefined(value)),
+  );
+const optionalDevStateModeConfig = (name: string): Config.Config<DevStateMode | undefined> =>
+  Config.schema(Schema.Literals(DEV_STATE_MODES), name).pipe(
     Config.option,
     Config.map((value) => Option.getOrUndefined(value)),
   );
@@ -128,6 +135,7 @@ interface CreateDevRunnerEnvInput {
   readonly host: string | undefined;
   readonly port: number | undefined;
   readonly devUrl: URL | undefined;
+  readonly devStateMode?: DevStateMode | undefined;
 }
 
 export function createDevRunnerEnv({
@@ -142,12 +150,14 @@ export function createDevRunnerEnv({
   host,
   port,
   devUrl,
+  devStateMode,
 }: CreateDevRunnerEnvInput): Effect.Effect<NodeJS.ProcessEnv, never, Path.Path> {
   return Effect.gen(function* () {
     const serverPort = port ?? BASE_SERVER_PORT + serverOffset;
     const webPort = BASE_WEB_PORT + webOffset;
     const resolvedBaseDir = yield* resolveBaseDir(t3Home);
     const isDesktopMode = mode === "dev:desktop";
+    const resolvedDevStateMode = devStateMode ?? (isDesktopMode ? "shared" : undefined);
 
     const output: NodeJS.ProcessEnv = {
       ...baseEnv,
@@ -157,6 +167,12 @@ export function createDevRunnerEnv({
         `http://${isDesktopMode ? DESKTOP_DEV_LOOPBACK_HOST : "localhost"}:${webPort}`,
       T3CODE_HOME: resolvedBaseDir,
     };
+
+    if (resolvedDevStateMode !== undefined) {
+      output.T3CODE_DEV_STATE_MODE = resolvedDevStateMode;
+    } else {
+      delete output.T3CODE_DEV_STATE_MODE;
+    }
 
     if (!isDesktopMode) {
       output.T3CODE_PORT = String(serverPort);
@@ -371,6 +387,7 @@ interface DevRunnerCliInput {
   readonly host: string | undefined;
   readonly port: number | undefined;
   readonly devUrl: URL | undefined;
+  readonly devStateMode: DevStateMode | undefined;
   readonly dryRun: boolean;
   readonly turboArgs: ReadonlyArray<string>;
 }
@@ -415,6 +432,7 @@ export function runDevRunnerWithInput(input: DevRunnerCliInput) {
       host: input.host,
       port: input.port,
       devUrl: input.devUrl,
+      devStateMode: input.devStateMode,
     });
 
     const selectionSuffix =
@@ -423,7 +441,7 @@ export function runDevRunnerWithInput(input: DevRunnerCliInput) {
         : "";
 
     yield* Effect.logInfo(
-      `[dev-runner] mode=${input.mode} source=${source}${selectionSuffix} serverPort=${String(env.T3CODE_PORT)} webPort=${String(env.PORT)} baseDir=${String(env.T3CODE_HOME)}`,
+      `[dev-runner] mode=${input.mode} source=${source}${selectionSuffix} serverPort=${String(env.T3CODE_PORT)} webPort=${String(env.PORT)} baseDir=${String(env.T3CODE_HOME)} devStateMode=${String(env.T3CODE_DEV_STATE_MODE ?? "isolated")}`,
     );
 
     if (input.dryRun) {
@@ -503,6 +521,12 @@ const devRunnerCli = Command.make("dev-runner", {
     Flag.withSchema(Schema.URLFromString),
     Flag.withDescription("Web dev URL override (forwards to VITE_DEV_SERVER_URL)."),
     Flag.withFallbackConfig(optionalUrlConfig("VITE_DEV_SERVER_URL")),
+  ),
+  devStateMode: Flag.choice("dev-state-mode", DEV_STATE_MODES).pipe(
+    Flag.withDescription(
+      "Development server state mode: isolated uses ~/.t3/dev, shared uses ~/.t3/userdata.",
+    ),
+    Flag.withFallbackConfig(optionalDevStateModeConfig("T3CODE_DEV_STATE_MODE")),
   ),
   dryRun: Flag.boolean("dry-run").pipe(
     Flag.withDescription("Resolve mode/ports/env and print, but do not spawn turbo."),

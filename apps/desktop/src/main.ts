@@ -288,6 +288,15 @@ function resolveDesktopDevServerUrl(): string {
   return devServerUrl;
 }
 
+function resolveDesktopDevStateMode(): "isolated" | "shared" | undefined {
+  const rawMode = process.env.T3CODE_DEV_STATE_MODE?.trim();
+  if (rawMode === "isolated" || rawMode === "shared") {
+    return rawMode;
+  }
+
+  return isDevelopment ? "shared" : undefined;
+}
+
 function backendChildEnv(): NodeJS.ProcessEnv {
   const env = { ...process.env };
   delete env.T3CODE_PORT;
@@ -1389,6 +1398,7 @@ function startBackend(): void {
   });
   const bootstrapStream = child.stdio[3];
   if (bootstrapStream && "write" in bootstrapStream) {
+    const devStateMode = resolveDesktopDevStateMode();
     bootstrapStream.write(
       `${JSON.stringify({
         mode: "desktop",
@@ -1397,6 +1407,7 @@ function startBackend(): void {
         t3Home: BASE_DIR,
         host: backendBindHost,
         desktopBootstrapToken: backendBootstrapToken,
+        ...(devStateMode ? { devStateMode } : {}),
         ...(backendObservabilitySettings.otlpTracesUrl
           ? { otlpTracesUrl: backendObservabilitySettings.otlpTracesUrl }
           : {}),

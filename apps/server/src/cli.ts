@@ -33,6 +33,7 @@ import {
 
 import {
   DEFAULT_PORT,
+  DevStateMode,
   deriveServerPaths,
   ensureServerDirectories,
   resolveStaticDir,
@@ -74,6 +75,7 @@ const BootstrapEnvelopeSchema = Schema.Struct({
   host: Schema.optional(Schema.String),
   t3Home: Schema.optional(Schema.String),
   devUrl: Schema.optional(Schema.URLFromString),
+  devStateMode: Schema.optional(DevStateMode),
   noBrowser: Schema.optional(Schema.Boolean),
   desktopBootstrapToken: Schema.optional(Schema.String),
   autoBootstrapProjectFromCwd: Schema.optional(Schema.Boolean),
@@ -158,6 +160,10 @@ const EnvServerConfig = Config.all({
   host: Config.string("T3CODE_HOST").pipe(Config.option, Config.map(Option.getOrUndefined)),
   t3Home: Config.string("T3CODE_HOME").pipe(Config.option, Config.map(Option.getOrUndefined)),
   devUrl: Config.url("VITE_DEV_SERVER_URL").pipe(Config.option, Config.map(Option.getOrUndefined)),
+  devStateMode: Config.schema(DevStateMode, "T3CODE_DEV_STATE_MODE").pipe(
+    Config.option,
+    Config.map(Option.getOrUndefined),
+  ),
   noBrowser: Config.boolean("T3CODE_NO_BROWSER").pipe(
     Config.option,
     Config.map(Option.getOrUndefined),
@@ -286,7 +292,14 @@ export const resolveServerConfig = (
     const rawCwd = Option.getOrElse(normalizedFlags.cwd, () => process.cwd());
     const cwd = path.resolve(yield* expandHomePath(rawCwd.trim()));
     yield* fs.makeDirectory(cwd, { recursive: true });
-    const derivedPaths = yield* deriveServerPaths(baseDir, devUrl);
+    const devStateMode = Option.getOrElse(
+      resolveOptionPrecedence(
+        Option.fromUndefinedOr(env.devStateMode),
+        Option.fromUndefinedOr(bootstrap?.devStateMode),
+      ),
+      () => "isolated" as const,
+    );
+    const derivedPaths = yield* deriveServerPaths(baseDir, devUrl, devStateMode);
     yield* ensureServerDirectories(derivedPaths);
     const persistedObservabilitySettings = yield* loadPersistedObservabilitySettings(
       derivedPaths.settingsPath,
