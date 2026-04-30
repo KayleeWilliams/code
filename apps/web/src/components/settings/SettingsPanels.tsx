@@ -23,7 +23,6 @@ import {
 } from "../../components/desktopUpdate.logic";
 import { ProviderModelPicker } from "../chat/ProviderModelPicker";
 import { TraitsPicker } from "../chat/TraitsPicker";
-import { resolveAndPersistPreferredEditor } from "../../editorPreferences";
 import { isElectron } from "../../env";
 import { useTheme } from "../../hooks/useTheme";
 import { useSettings, useUpdateSettings } from "../../hooks/useSettings";
@@ -67,12 +66,8 @@ import {
   useRelativeTimeTick,
 } from "./settingsLayout";
 import { ProjectFavicon } from "../ProjectFavicon";
-import {
-  useServerAvailableEditors,
-  useServerKeybindingsConfigPath,
-  useServerObservability,
-  useServerProviders,
-} from "../../rpc/serverState";
+import { useServerObservability, useServerProviders } from "../../rpc/serverState";
+import { useOpenServerPathInPreferredEditor } from "./settingsOpenInEditor";
 
 const THEME_OPTIONS = [
   {
@@ -516,13 +511,8 @@ export function GeneralSettingsPanel() {
   const { theme, setTheme } = useTheme();
   const settings = useSettings();
   const { updateSettings } = useUpdateSettings();
-  const [openingPathByTarget, setOpeningPathByTarget] = useState({
-    keybindings: false,
-    logsDirectory: false,
-  });
-  const [openPathErrorByTarget, setOpenPathErrorByTarget] = useState<
-    Partial<Record<"keybindings" | "logsDirectory", string | null>>
-  >({});
+  const { openPathInPreferredEditor, openingPathByTarget, openPathErrorByTarget } =
+    useOpenServerPathInPreferredEditor();
   const [isRefreshingProviders, setIsRefreshingProviders] = useState(false);
   const [isAddInstanceDialogOpen, setIsAddInstanceDialogOpen] = useState(false);
   // Collapsible state per provider-instance card, keyed by the instance id.
@@ -549,8 +539,6 @@ export function GeneralSettingsPanel() {
       });
   }, []);
 
-  const keybindingsConfigPath = useServerKeybindingsConfigPath();
-  const availableEditors = useServerAvailableEditors();
   const observability = useServerObservability();
   const serverProviders = useServerProviders();
   const visibleProviderSettings = PROVIDER_SETTINGS.filter(
@@ -597,49 +585,12 @@ export function GeneralSettingsPanel() {
     DEFAULT_UNIFIED_SETTINGS.textGenerationModelSelection ?? null,
   );
 
-  const openInPreferredEditor = useCallback(
-    (target: "keybindings" | "logsDirectory", path: string | null, failureMessage: string) => {
-      if (!path) return;
-      setOpenPathErrorByTarget((existing) => ({ ...existing, [target]: null }));
-      setOpeningPathByTarget((existing) => ({ ...existing, [target]: true }));
-
-      const editor = resolveAndPersistPreferredEditor(availableEditors ?? []);
-      if (!editor) {
-        setOpenPathErrorByTarget((existing) => ({
-          ...existing,
-          [target]: "No available editors found.",
-        }));
-        setOpeningPathByTarget((existing) => ({ ...existing, [target]: false }));
-        return;
-      }
-
-      void ensureLocalApi()
-        .shell.openInEditor(path, editor)
-        .catch((error) => {
-          setOpenPathErrorByTarget((existing) => ({
-            ...existing,
-            [target]: error instanceof Error ? error.message : failureMessage,
-          }));
-        })
-        .finally(() => {
-          setOpeningPathByTarget((existing) => ({ ...existing, [target]: false }));
-        });
-    },
-    [availableEditors],
-  );
-
-  const openKeybindingsFile = useCallback(() => {
-    openInPreferredEditor("keybindings", keybindingsConfigPath, "Unable to open keybindings file.");
-  }, [keybindingsConfigPath, openInPreferredEditor]);
-
   const openLogsDirectory = useCallback(() => {
-    openInPreferredEditor("logsDirectory", logsDirectoryPath, "Unable to open logs folder.");
-  }, [logsDirectoryPath, openInPreferredEditor]);
+    openPathInPreferredEditor("logsDirectory", logsDirectoryPath, "Unable to open logs folder.");
+  }, [logsDirectoryPath, openPathInPreferredEditor]);
 
-  const openKeybindingsError = openPathErrorByTarget.keybindings ?? null;
   const openDiagnosticsError = openPathErrorByTarget.logsDirectory ?? null;
-  const isOpeningKeybindings = openingPathByTarget.keybindings;
-  const isOpeningLogsDirectory = openingPathByTarget.logsDirectory;
+  const isOpeningLogsDirectory = Boolean(openingPathByTarget.logsDirectory);
 
   const lastCheckedAt =
     serverProviders.length > 0
@@ -1607,35 +1558,6 @@ export function GeneralSettingsPanel() {
         open={isAddInstanceDialogOpen}
         onOpenChange={setIsAddInstanceDialogOpen}
       />
-
-      <SettingsSection title="Advanced">
-        <SettingsRow
-          title="Keybindings"
-          description="Open the persisted `keybindings.json` file to edit advanced bindings directly."
-          status={
-            <>
-              <span className="block break-all font-mono text-[11px] text-foreground">
-                {keybindingsConfigPath ?? "Resolving keybindings path..."}
-              </span>
-              {openKeybindingsError ? (
-                <span className="mt-1 block text-destructive">{openKeybindingsError}</span>
-              ) : (
-                <span className="mt-1 block">Opens in your preferred editor.</span>
-              )}
-            </>
-          }
-          control={
-            <Button
-              size="xs"
-              variant="outline"
-              disabled={!keybindingsConfigPath || isOpeningKeybindings}
-              onClick={openKeybindingsFile}
-            >
-              {isOpeningKeybindings ? "Opening..." : "Open file"}
-            </Button>
-          }
-        />
-      </SettingsSection>
 
       <SettingsSection title="About">
         {isElectron ? (

@@ -1,9 +1,12 @@
 import { Schema } from "effect";
 import { describe, expect, it } from "vitest";
 
-import { ServerProvider } from "./server.ts";
+import { ServerConfigStreamKeybindingsUpdatedEvent, ServerProvider } from "./server.ts";
 
 const decodeServerProvider = Schema.decodeUnknownSync(ServerProvider);
+const decodeKeybindingsUpdatedEvent = Schema.decodeUnknownSync(
+  ServerConfigStreamKeybindingsUpdatedEvent,
+);
 
 describe("ServerProvider", () => {
   it("defaults capability arrays when decoding provider snapshots", () => {
@@ -42,5 +45,32 @@ describe("ServerProvider", () => {
     });
 
     expect(parsed.continuation?.groupKey).toBe("codex:home:/Users/julius/.codex");
+  });
+});
+
+describe("ServerConfigStreamKeybindingsUpdatedEvent", () => {
+  it("requires resolved keybindings in the update payload", () => {
+    const parsed = decodeKeybindingsUpdatedEvent({
+      version: 1,
+      type: "keybindingsUpdated",
+      payload: {
+        keybindings: [
+          {
+            command: "terminal.toggle",
+            shortcut: {
+              key: "j",
+              metaKey: false,
+              ctrlKey: false,
+              shiftKey: false,
+              altKey: false,
+              modKey: true,
+            },
+          },
+        ],
+        issues: [],
+      },
+    });
+
+    expect(parsed.payload.keybindings).toHaveLength(1);
   });
 });

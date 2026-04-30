@@ -1861,7 +1861,19 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         },
       ] as const;
       const changeEvent = {
-        keybindings: [],
+        keybindings: [
+          ResolvedKeybindingRule.make({
+            command: "terminal.toggle",
+            shortcut: {
+              key: "j",
+              metaKey: false,
+              ctrlKey: false,
+              shiftKey: false,
+              altKey: false,
+              modKey: true,
+            },
+          }),
+        ],
         issues: [],
       } as const;
 
@@ -1909,7 +1921,22 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       assert.deepEqual(second, {
         version: 1,
         type: "keybindingsUpdated",
-        payload: { issues: [] },
+        payload: {
+          keybindings: [
+            {
+              command: "terminal.toggle",
+              shortcut: {
+                key: "j",
+                metaKey: false,
+                ctrlKey: false,
+                shiftKey: false,
+                altKey: false,
+                modKey: true,
+              },
+            },
+          ],
+          issues: [],
+        },
       });
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
