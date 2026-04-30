@@ -2628,7 +2628,9 @@ export default function ChatView(props: ChatViewProps) {
                     prepareWorktree: {
                       projectCwd: activeProject.cwd,
                       baseBranch: baseBranchForWorktree,
-                      branch: buildTemporaryWorktreeBranchName(),
+                      branch: buildTemporaryWorktreeBranchName(
+                        settings.workspaceDefaults.worktreeBranchPrefix,
+                      ),
                     },
                     runSetupScript: true,
                   }

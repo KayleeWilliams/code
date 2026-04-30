@@ -453,9 +453,23 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
             }
 
             if (bootstrap?.prepareWorktree) {
+              const { workspaceDefaults } = yield* serverSettings.getSettings;
+              const configuredBaseRef = workspaceDefaults.worktreeBaseRef.trim();
+              const baseRef =
+                configuredBaseRef.length > 0
+                  ? configuredBaseRef
+                  : bootstrap.prepareWorktree.baseBranch;
+              const originBranch = /^origin\/(.+)$/.exec(baseRef)?.[1];
+              if (workspaceDefaults.fetchBeforeWorktreeCreate && originBranch) {
+                yield* git.execute({
+                  operation: "GitCore.fetchWorktreeBaseRef",
+                  cwd: bootstrap.prepareWorktree.projectCwd,
+                  args: ["fetch", "origin", originBranch],
+                });
+              }
               const worktree = yield* git.createWorktree({
                 cwd: bootstrap.prepareWorktree.projectCwd,
-                branch: bootstrap.prepareWorktree.baseBranch,
+                branch: baseRef,
                 newBranch: bootstrap.prepareWorktree.branch,
                 path: null,
               });

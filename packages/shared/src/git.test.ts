@@ -2,11 +2,15 @@ import type { GitStatusRemoteResult, GitStatusResult } from "@t3tools/contracts"
 import { describe, expect, it } from "vitest";
 
 import {
+  buildGeneratedWorktreeBranchName,
   applyGitStatusStreamEvent,
   buildTemporaryWorktreeBranchName,
+  DEFAULT_WORKTREE_BRANCH_PREFIX,
   isTemporaryWorktreeBranch,
   normalizeGitRemoteUrl,
+  parseGitWorktreePorcelain,
   parseGitHubRepositoryNameWithOwnerFromRemoteUrl,
+  sanitizeWorktreeBranchPrefix,
   WORKTREE_BRANCH_PREFIX,
 } from "./git.ts";
 
@@ -58,6 +62,19 @@ describe("isTemporaryWorktreeBranch", () => {
     expect(isTemporaryWorktreeBranch(buildTemporaryWorktreeBranchName())).toBe(true);
   });
 
+  it("uses the configurable temporary worktree branch prefix", () => {
+    const branch = buildTemporaryWorktreeBranchName("team");
+    expect(branch.startsWith("team/")).toBe(true);
+    expect(isTemporaryWorktreeBranch(branch, "team")).toBe(true);
+  });
+
+  it("falls back to the default temporary branch prefix when configured prefix is empty", () => {
+    expect(sanitizeWorktreeBranchPrefix("   ")).toBe(DEFAULT_WORKTREE_BRANCH_PREFIX);
+    expect(
+      buildTemporaryWorktreeBranchName("   ").startsWith(`${DEFAULT_WORKTREE_BRANCH_PREFIX}/`),
+    ).toBe(true);
+  });
+
   it("matches generated temporary worktree branches", () => {
     expect(isTemporaryWorktreeBranch(`${WORKTREE_BRANCH_PREFIX}/deadbeef`)).toBe(true);
     expect(isTemporaryWorktreeBranch(` ${WORKTREE_BRANCH_PREFIX}/deadbeef `)).toBe(true);
@@ -68,6 +85,100 @@ describe("isTemporaryWorktreeBranch", () => {
     expect(isTemporaryWorktreeBranch(`${WORKTREE_BRANCH_PREFIX}/feature/demo`)).toBe(false);
     expect(isTemporaryWorktreeBranch("main")).toBe(false);
     expect(isTemporaryWorktreeBranch(`${WORKTREE_BRANCH_PREFIX}/deadbeef-extra`)).toBe(false);
+  });
+
+  it("keeps legacy t3code temporary branch recognition when a custom prefix is configured", () => {
+    expect(isTemporaryWorktreeBranch(`${WORKTREE_BRANCH_PREFIX}/deadbeef`, "team")).toBe(true);
+  });
+});
+
+describe("buildGeneratedWorktreeBranchName", () => {
+  it("uses a configurable generated branch namespace", () => {
+    expect(buildGeneratedWorktreeBranchName("Add billing", "team")).toBe("team/add-billing");
+  });
+
+  it("removes temporary and generated namespaces before rebuilding the branch name", () => {
+    expect(buildGeneratedWorktreeBranchName("work/add billing", "feature")).toBe(
+      "feature/add-billing",
+    );
+    expect(buildGeneratedWorktreeBranchName("t3code/add billing", "team")).toBe("team/add-billing");
+  });
+});
+
+describe("parseGitWorktreePorcelain", () => {
+  it("parses multiple worktree records and strips refs/heads prefixes", () => {
+    expect(
+      parseGitWorktreePorcelain(
+        [
+          "worktree /repo/main",
+          "HEAD abc123",
+          "branch refs/heads/main",
+          "",
+          "worktree /Users/kaylee/Conductor Worktrees/feature demo",
+          "HEAD def456",
+          "branch refs/heads/feature/demo",
+          "",
+        ].join("\n"),
+      ),
+    ).toEqual([
+      {
+        path: "/repo/main",
+        branch: "main",
+        head: "abc123",
+        detached: false,
+        bare: false,
+        lockedReason: null,
+        prunableReason: null,
+      },
+      {
+        path: "/Users/kaylee/Conductor Worktrees/feature demo",
+        branch: "feature/demo",
+        head: "def456",
+        detached: false,
+        bare: false,
+        lockedReason: null,
+        prunableReason: null,
+      },
+    ]);
+  });
+
+  it("handles detached, bare, locked, and prunable worktrees", () => {
+    expect(
+      parseGitWorktreePorcelain(
+        [
+          "worktree /repo/detached",
+          "HEAD abc123",
+          "detached",
+          "locked agent is running",
+          "",
+          "worktree /repo/missing",
+          "HEAD def456",
+          "branch refs/heads/stale",
+          "bare",
+          "prunable gitdir file points to non-existent location",
+          "",
+        ].join("\n"),
+      ),
+    ).toEqual([
+      {
+        path: "/repo/detached",
+        branch: null,
+        head: "abc123",
+        detached: true,
+        bare: false,
+        lockedReason: "agent is running",
+        prunableReason: null,
+      },
+      {
+        path: "/repo/missing",
+        branch: "stale",
+        head: "def456",
+        detached: false,
+        bare: true,
+        lockedReason: null,
+        prunableReason: "gitdir file points to non-existent location",
+      },
+    ]);
   });
 });
 

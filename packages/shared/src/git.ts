@@ -9,8 +9,28 @@ import type {
 import * as Effect from "effect/Effect";
 import * as Random from "effect/Random";
 
-export const WORKTREE_BRANCH_PREFIX = "t3code";
-const TEMP_WORKTREE_BRANCH_PATTERN = new RegExp(`^${WORKTREE_BRANCH_PREFIX}\\/[0-9a-f]{8}$`);
+export const LEGACY_WORKTREE_BRANCH_PREFIX = "t3code";
+export const DEFAULT_WORKTREE_BRANCH_PREFIX = "work";
+export const DEFAULT_GENERATED_BRANCH_NAMESPACE = "feature";
+export const WORKTREE_BRANCH_PREFIX = LEGACY_WORKTREE_BRANCH_PREFIX;
+
+export interface ParsedGitWorktree {
+  path: string;
+  branch: string | null;
+  head: string | null;
+  detached: boolean;
+  bare: boolean;
+  lockedReason: string | null;
+  prunableReason: string | null;
+}
+
+function temporaryWorktreeBranchPattern(prefix: string): RegExp {
+  return new RegExp(`^${escapeRegExp(prefix)}\\/[0-9a-f]{8}$`, "i");
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
 
 /**
  * Sanitize an arbitrary string into a valid, lowercase git branch fragment.
@@ -44,6 +64,21 @@ export function sanitizeFeatureBranchName(raw: string): string {
     return sanitized.startsWith("feature/") ? sanitized : `feature/${sanitized}`;
   }
   return `feature/${sanitized}`;
+}
+
+export function sanitizeBranchNamespace(
+  raw: string,
+  fallback = DEFAULT_GENERATED_BRANCH_NAMESPACE,
+) {
+  if (raw.trim().length === 0) {
+    return fallback;
+  }
+  const sanitized = sanitizeBranchFragment(raw).replace(/\/+/g, "-");
+  return sanitized.length > 0 ? sanitized : fallback;
+}
+
+export function sanitizeWorktreeBranchPrefix(raw: string | null | undefined): string {
+  return sanitizeBranchNamespace(raw ?? "", DEFAULT_WORKTREE_BRANCH_PREFIX);
 }
 
 const AUTO_FEATURE_BRANCH_FALLBACK = "feature/update";
@@ -85,13 +120,141 @@ export function deriveLocalBranchNameFromRemoteRef(branchName: string): string {
   return branchName.slice(firstSeparatorIndex + 1);
 }
 
-export function buildTemporaryWorktreeBranchName(): string {
+export function buildTemporaryWorktreeBranchName(prefix = DEFAULT_WORKTREE_BRANCH_PREFIX): string {
   const token = Effect.runSync(Random.nextUUIDv4).replace(/-/g, "").slice(0, 8).toLowerCase();
-  return `${WORKTREE_BRANCH_PREFIX}/${token}`;
+  return `${sanitizeWorktreeBranchPrefix(prefix)}/${token}`;
 }
 
-export function isTemporaryWorktreeBranch(branch: string): boolean {
-  return TEMP_WORKTREE_BRANCH_PATTERN.test(branch.trim().toLowerCase());
+export function isTemporaryWorktreeBranch(branch: string, prefix?: string): boolean {
+  const normalized = branch.trim();
+  if (prefix !== undefined) {
+    return (
+      temporaryWorktreeBranchPattern(sanitizeWorktreeBranchPrefix(prefix)).test(normalized) ||
+      temporaryWorktreeBranchPattern(LEGACY_WORKTREE_BRANCH_PREFIX).test(normalized)
+    );
+  }
+  return (
+    temporaryWorktreeBranchPattern(DEFAULT_WORKTREE_BRANCH_PREFIX).test(normalized) ||
+    temporaryWorktreeBranchPattern(LEGACY_WORKTREE_BRANCH_PREFIX).test(normalized)
+  );
+}
+
+export function buildGeneratedWorktreeBranchName(
+  raw: string,
+  namespace = DEFAULT_GENERATED_BRANCH_NAMESPACE,
+): string {
+  const normalized = raw
+    .trim()
+    .toLowerCase()
+    .replace(/^refs\/heads\//, "")
+    .replace(/['"`]/g, "");
+
+  const namespaces = new Set([
+    sanitizeBranchNamespace(namespace),
+    DEFAULT_GENERATED_BRANCH_NAMESPACE,
+    DEFAULT_WORKTREE_BRANCH_PREFIX,
+    LEGACY_WORKTREE_BRANCH_PREFIX,
+  ]);
+  let withoutNamespace = normalized;
+  for (const candidate of namespaces) {
+    const prefix = `${candidate}/`;
+    if (withoutNamespace.startsWith(prefix)) {
+      withoutNamespace = withoutNamespace.slice(prefix.length);
+      break;
+    }
+  }
+
+  return `${sanitizeBranchNamespace(namespace)}/${sanitizeBranchFragment(withoutNamespace)}`;
+}
+
+function parseGitWorktreeStateLine(line: string): { key: string; value: string | null } | null {
+  const separatorIndex = line.indexOf(" ");
+  if (separatorIndex < 0) {
+    const key = line.trim();
+    return key.length > 0 ? { key, value: null } : null;
+  }
+
+  const key = line.slice(0, separatorIndex).trim();
+  if (key.length === 0) {
+    return null;
+  }
+  return {
+    key,
+    value: line.slice(separatorIndex + 1),
+  };
+}
+
+export function parseGitWorktreePorcelain(output: string): ParsedGitWorktree[] {
+  const worktrees: ParsedGitWorktree[] = [];
+  let current: ParsedGitWorktree | null = null;
+
+  const finishCurrent = () => {
+    if (current !== null) {
+      worktrees.push(current);
+      current = null;
+    }
+  };
+
+  for (const line of output.split(/\r?\n/g)) {
+    if (line.trim().length === 0) {
+      finishCurrent();
+      continue;
+    }
+
+    if (line.startsWith("worktree ")) {
+      finishCurrent();
+      const worktreePath = line.slice("worktree ".length);
+      if (worktreePath.length === 0) {
+        continue;
+      }
+      current = {
+        path: worktreePath,
+        branch: null,
+        head: null,
+        detached: false,
+        bare: false,
+        lockedReason: null,
+        prunableReason: null,
+      };
+      continue;
+    }
+
+    if (current === null) {
+      continue;
+    }
+
+    const parsedLine = parseGitWorktreeStateLine(line);
+    if (!parsedLine) {
+      continue;
+    }
+
+    switch (parsedLine.key) {
+      case "HEAD":
+        current.head = parsedLine.value?.trim() || null;
+        break;
+      case "branch": {
+        const branch = parsedLine.value?.trim() ?? "";
+        current.branch = branch.replace(/^refs\/heads\//, "") || null;
+        break;
+      }
+      case "detached":
+        current.detached = true;
+        current.branch = null;
+        break;
+      case "bare":
+        current.bare = true;
+        break;
+      case "locked":
+        current.lockedReason = parsedLine.value?.trim() || "";
+        break;
+      case "prunable":
+        current.prunableReason = parsedLine.value?.trim() || "";
+        break;
+    }
+  }
+
+  finishCurrent();
+  return worktrees;
 }
 
 /**

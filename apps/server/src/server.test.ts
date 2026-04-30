@@ -3502,6 +3502,15 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
             },
           }),
         );
+        const execute = vi.fn((_: Parameters<GitCoreShape["execute"]>[0]) =>
+          Effect.succeed({
+            code: 0,
+            stdout: "",
+            stderr: "",
+            stdoutTruncated: false,
+            stderrTruncated: false,
+          }),
+        );
         const runForThread = vi.fn(
           (_: Parameters<ProjectSetupScriptRunnerShape["runForThread"]>[0]) =>
             Effect.succeed({
@@ -3516,6 +3525,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         yield* buildAppUnderTest({
           layers: {
             gitCore: {
+              execute,
               createWorktree,
             },
             gitStatusBroadcaster: {
@@ -3588,9 +3598,14 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         );
         assert.deepEqual(createWorktree.mock.calls[0]?.[0], {
           cwd: "/tmp/project",
-          branch: "main",
+          branch: "origin/main",
           newBranch: "t3code/bootstrap-branch",
           path: null,
+        });
+        assert.deepEqual(execute.mock.calls[0]?.[0], {
+          operation: "GitCore.fetchWorktreeBaseRef",
+          cwd: "/tmp/project",
+          args: ["fetch", "origin", "main"],
         });
         assert.deepEqual(runForThread.mock.calls[0]?.[0], {
           threadId: ThreadId.make("thread-bootstrap"),
@@ -3616,9 +3631,113 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
+  it.effect("surfaces bootstrap worktree base fetch failures before creating a worktree", () =>
+    Effect.gen(function* () {
+      const dispatchedCommands: Array<OrchestrationCommand> = [];
+      const execute = vi.fn((input: Parameters<GitCoreShape["execute"]>[0]) =>
+        Effect.fail(
+          new GitCommandError({
+            operation: input.operation,
+            command: `git ${input.args.join(" ")}`,
+            cwd: input.cwd,
+            detail: "simulated fetch failure",
+          }),
+        ),
+      );
+      const createWorktree = vi.fn((_: Parameters<GitCoreShape["createWorktree"]>[0]) =>
+        Effect.succeed({
+          worktree: {
+            branch: "t3code/bootstrap-branch",
+            path: "/tmp/bootstrap-worktree",
+          },
+        }),
+      );
+
+      yield* buildAppUnderTest({
+        layers: {
+          gitCore: {
+            execute,
+            createWorktree,
+          },
+          orchestrationEngine: {
+            dispatch: (command) =>
+              Effect.sync(() => {
+                dispatchedCommands.push(command);
+                return { sequence: dispatchedCommands.length };
+              }),
+            readEvents: () => Stream.empty,
+          },
+        },
+      });
+
+      const createdAt = new Date().toISOString();
+      const wsUrl = yield* getWsServerUrl("/ws");
+      const result = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          client[ORCHESTRATION_WS_METHODS.dispatchCommand]({
+            type: "thread.turn.start",
+            commandId: CommandId.make("cmd-bootstrap-turn-start-fetch-failure"),
+            threadId: ThreadId.make("thread-bootstrap-fetch-failure"),
+            message: {
+              messageId: MessageId.make("msg-bootstrap-fetch-failure"),
+              role: "user",
+              text: "hello",
+              attachments: [],
+            },
+            modelSelection: defaultModelSelection,
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            bootstrap: {
+              createThread: {
+                projectId: defaultProjectId,
+                title: "Bootstrap Thread",
+                modelSelection: defaultModelSelection,
+                runtimeMode: "full-access",
+                interactionMode: "default",
+                branch: "main",
+                worktreePath: null,
+                createdAt,
+              },
+              prepareWorktree: {
+                projectCwd: "/tmp/project",
+                baseBranch: "main",
+                branch: "t3code/bootstrap-branch",
+              },
+              runSetupScript: false,
+            },
+            createdAt,
+          }),
+        ).pipe(Effect.result),
+      );
+
+      assertTrue(result._tag === "Failure");
+      assertTrue(result.failure._tag === "OrchestrationDispatchCommandError");
+      assert.include(result.failure.message, "simulated fetch failure");
+      assert.deepEqual(execute.mock.calls[0]?.[0], {
+        operation: "GitCore.fetchWorktreeBaseRef",
+        cwd: "/tmp/project",
+        args: ["fetch", "origin", "main"],
+      });
+      assert.equal(createWorktree.mock.calls.length, 0);
+      assert.deepEqual(
+        dispatchedCommands.map((command) => command.type),
+        ["thread.create", "thread.delete"],
+      );
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
   it.effect("records setup-script failures without aborting bootstrap turn start", () =>
     Effect.gen(function* () {
       const dispatchedCommands: Array<OrchestrationCommand> = [];
+      const execute = vi.fn((_: Parameters<GitCoreShape["execute"]>[0]) =>
+        Effect.succeed({
+          code: 0,
+          stdout: "",
+          stderr: "",
+          stdoutTruncated: false,
+          stderrTruncated: false,
+        }),
+      );
       const createWorktree = vi.fn((_: Parameters<GitCoreShape["createWorktree"]>[0]) =>
         Effect.succeed({
           worktree: {
@@ -3635,6 +3754,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       yield* buildAppUnderTest({
         layers: {
           gitCore: {
+            execute,
             createWorktree,
           },
           orchestrationEngine: {
@@ -3712,6 +3832,15 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
   it.effect("does not misattribute setup activity dispatch failures as setup launch failures", () =>
     Effect.gen(function* () {
       const dispatchedCommands: Array<OrchestrationCommand> = [];
+      const execute = vi.fn((_: Parameters<GitCoreShape["execute"]>[0]) =>
+        Effect.succeed({
+          code: 0,
+          stdout: "",
+          stderr: "",
+          stdoutTruncated: false,
+          stderrTruncated: false,
+        }),
+      );
       const createWorktree = vi.fn((_: Parameters<GitCoreShape["createWorktree"]>[0]) =>
         Effect.succeed({
           worktree: {
@@ -3735,6 +3864,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       yield* buildAppUnderTest({
         layers: {
           gitCore: {
+            execute,
             createWorktree,
           },
           orchestrationEngine: {
@@ -3830,6 +3960,15 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
   it.effect("cleans up created bootstrap threads when worktree creation defects", () =>
     Effect.gen(function* () {
       const dispatchedCommands: Array<OrchestrationCommand> = [];
+      const execute = vi.fn((_: Parameters<GitCoreShape["execute"]>[0]) =>
+        Effect.succeed({
+          code: 0,
+          stdout: "",
+          stderr: "",
+          stdoutTruncated: false,
+          stderrTruncated: false,
+        }),
+      );
       const createWorktree = vi.fn((_: Parameters<GitCoreShape["createWorktree"]>[0]) =>
         Effect.die(new Error("worktree exploded")),
       );
@@ -3837,6 +3976,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       yield* buildAppUnderTest({
         layers: {
           gitCore: {
+            execute,
             createWorktree,
           },
           orchestrationEngine: {
