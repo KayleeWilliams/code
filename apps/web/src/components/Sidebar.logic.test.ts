@@ -3,6 +3,7 @@ import { ProviderDriverKind } from "@t3tools/contracts";
 
 import {
   createThreadJumpHintVisibilityController,
+  deriveExternalWorktreeRows,
   getSidebarThreadIdsToPrewarm,
   getVisibleSidebarThreadIds,
   resolveAdjacentThreadId,
@@ -23,6 +24,7 @@ import {
 } from "./Sidebar.logic";
 import {
   EnvironmentId,
+  type GitWorktree,
   OrchestrationLatestTurn,
   ProjectId,
   ProviderInstanceId,
@@ -36,6 +38,22 @@ import {
 } from "../types";
 
 const localEnvironmentId = EnvironmentId.make("environment-local");
+
+function makeWorktree(overrides: Partial<GitWorktree> & { path: string }): GitWorktree {
+  return {
+    path: overrides.path,
+    realPath: overrides.realPath ?? overrides.path,
+    branch: overrides.branch ?? "feature/demo",
+    head: overrides.head ?? "abc123",
+    detached: overrides.detached ?? false,
+    bare: overrides.bare ?? false,
+    lockedReason: overrides.lockedReason ?? null,
+    prunableReason: overrides.prunableReason ?? null,
+    upstream: overrides.upstream ?? "origin/feature/demo",
+    hasUpstream: overrides.hasUpstream ?? true,
+    isCurrent: overrides.isCurrent ?? false,
+  };
+}
 
 function makeLatestTurn(overrides?: {
   completedAt?: string | null;
@@ -271,6 +289,102 @@ describe("resolveSidebarNewThreadSeedContext", () => {
     ).toEqual({
       envMode: "worktree",
     });
+  });
+});
+
+describe("deriveExternalWorktreeRows", () => {
+  it("hides the current project worktree", () => {
+    expect(
+      deriveExternalWorktreeRows({
+        projectCwd: "/repo/main",
+        worktrees: [makeWorktree({ path: "/repo/main", branch: "main", isCurrent: true })],
+        existingThreads: [],
+        draftThreads: [],
+      }),
+    ).toEqual([]);
+  });
+
+  it("hides worktrees already linked to server threads or drafts", () => {
+    const rows = deriveExternalWorktreeRows({
+      projectCwd: "/repo/main",
+      worktrees: [
+        makeWorktree({ path: "/repo/thread", branch: "feature/thread" }),
+        makeWorktree({ path: "/repo/draft", branch: "feature/draft" }),
+        makeWorktree({ path: "/repo/new", branch: "feature/new" }),
+      ],
+      existingThreads: [{ worktreePath: "/repo/thread" }],
+      draftThreads: [{ worktreePath: "/repo/draft" }],
+    });
+
+    expect(rows.map((row) => row.path)).toEqual(["/repo/new"]);
+  });
+
+  it("keeps prunable worktrees disabled", () => {
+    const rows = deriveExternalWorktreeRows({
+      projectCwd: "/repo/main",
+      worktrees: [
+        makeWorktree({
+          path: "/repo/missing",
+          branch: "feature/missing",
+          prunableReason: "gitdir file points to non-existent location",
+        }),
+      ],
+      existingThreads: [],
+      draftThreads: [],
+    });
+
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.disabled).toBe(true);
+    expect(rows[0]?.stale).toBe(true);
+  });
+
+  it("marks branch worktrees without an upstream as stale but startable", () => {
+    const rows = deriveExternalWorktreeRows({
+      projectCwd: "/repo/main",
+      worktrees: [
+        makeWorktree({
+          path: "/repo/local-only",
+          branch: "feature/local-only",
+          upstream: null,
+          hasUpstream: false,
+        }),
+      ],
+      existingThreads: [],
+      draftThreads: [],
+    });
+
+    expect(rows[0]).toMatchObject({
+      path: "/repo/local-only",
+      disabled: false,
+      stale: true,
+      staleReason: "No upstream branch",
+    });
+  });
+
+  it("sorts upstream worktrees before stale and prunable rows by branch and path", () => {
+    const rows = deriveExternalWorktreeRows({
+      projectCwd: "/repo/main",
+      worktrees: [
+        makeWorktree({ path: "/repo/z", branch: "feature/z" }),
+        makeWorktree({
+          path: "/repo/local-only",
+          branch: "feature/local-only",
+          upstream: null,
+          hasUpstream: false,
+        }),
+        makeWorktree({ path: "/repo/a-missing", branch: "feature/a", prunableReason: "missing" }),
+        makeWorktree({ path: "/repo/a", branch: "feature/a" }),
+      ],
+      existingThreads: [],
+      draftThreads: [],
+    });
+
+    expect(rows.map((row) => row.path)).toEqual([
+      "/repo/a",
+      "/repo/z",
+      "/repo/local-only",
+      "/repo/a-missing",
+    ]);
   });
 });
 

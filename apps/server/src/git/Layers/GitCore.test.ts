@@ -1,4 +1,4 @@
-import { existsSync } from "node:fs";
+import { existsSync, realpathSync } from "node:fs";
 import path from "node:path";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -1413,6 +1413,86 @@ it.layer(TestLayer)("git integration", (it) => {
         expect(mainCurrent!.name).toBe(mainBranch);
 
         yield* (yield* GitCore).removeWorktree({ cwd: tmp, path: wtPath });
+      }),
+    );
+
+    it.effect("listWorktrees returns registered worktrees and marks the current cwd", () =>
+      Effect.gen(function* () {
+        const tmp = yield* makeTmpDir();
+        yield* initRepoWithCommit(tmp);
+
+        const wtPath = path.join(tmp, "external-worktree");
+        const mainBranch = (yield* (yield* GitCore).listBranches({ cwd: tmp })).branches.find(
+          (b) => b.current,
+        )!.name;
+
+        yield* (yield* GitCore).createWorktree({
+          cwd: tmp,
+          branch: mainBranch,
+          newBranch: "feature/external-worktree",
+          path: wtPath,
+        });
+
+        const result = yield* (yield* GitCore).listWorktrees({ cwd: tmp });
+
+        expect(result.isRepo).toBe(true);
+        expect(result.currentPath).toBeTruthy();
+        const realTmp = realpathSync(tmp);
+        const realWtPath = realpathSync(wtPath);
+        const mainWorktree = result.worktrees.find(
+          (worktree) =>
+            worktree.path === tmp || worktree.path === realTmp || worktree.realPath === realTmp,
+        );
+        const externalWorktree = result.worktrees.find(
+          (worktree) =>
+            worktree.path === wtPath ||
+            worktree.path === realWtPath ||
+            worktree.realPath === realWtPath,
+        );
+        expect(mainWorktree?.isCurrent).toBe(true);
+        expect(externalWorktree).toMatchObject({
+          path: realWtPath,
+          branch: "feature/external-worktree",
+          detached: false,
+          upstream: null,
+          hasUpstream: false,
+          isCurrent: false,
+        });
+
+        yield* (yield* GitCore).removeWorktree({ cwd: tmp, path: wtPath });
+      }),
+    );
+
+    it.effect("listWorktrees returns isRepo false outside a git repository", () =>
+      Effect.gen(function* () {
+        const tmp = yield* makeTmpDir();
+
+        const result = yield* (yield* GitCore).listWorktrees({ cwd: tmp });
+
+        expect(result).toEqual({
+          isRepo: false,
+          cwd: tmp,
+          currentPath: null,
+          worktrees: [],
+        });
+      }),
+    );
+
+    it.effect("listWorktrees surfaces real git failures", () =>
+      Effect.gen(function* () {
+        const core = yield* makeIsolatedGitCore(() =>
+          Effect.succeed({
+            code: 1,
+            stdout: "",
+            stderr: "fatal: unexpected worktree failure",
+            stdoutTruncated: false,
+            stderrTruncated: false,
+          }),
+        );
+
+        const result = yield* Effect.result(core.listWorktrees({ cwd: "/virtual/repo" }));
+
+        expect(result._tag).toBe("Failure");
       }),
     );
 

@@ -1,4 +1,5 @@
 import * as React from "react";
+import type { GitWorktree } from "@t3tools/contracts";
 import type { SidebarProjectSortOrder, SidebarThreadSortOrder } from "@t3tools/contracts/settings";
 import {
   getThreadSortTimestamp,
@@ -16,6 +17,23 @@ export const THREAD_JUMP_HINT_SHOW_DELAY_MS = 100;
 // nearby thread usually reuses an already-hot subscription.
 export const SIDEBAR_THREAD_PREWARM_LIMIT = 10;
 export type SidebarNewThreadEnvMode = "local" | "worktree";
+export interface ExternalWorktreeRow {
+  id: string;
+  path: string;
+  realPath: string | null;
+  branch: string | null;
+  head: string | null;
+  detached: boolean;
+  lockedReason: string | null;
+  prunableReason: string | null;
+  upstream: string | null;
+  hasUpstream: boolean;
+  disabled: boolean;
+  stale: boolean;
+  staleReason: string | null;
+  label: string;
+}
+
 type SidebarProject = {
   id: string;
   name: string;
@@ -239,6 +257,107 @@ export function orderItemsByPreferredIds<TItem, TId>(input: {
   });
   const remaining = items.filter((item) => !preferredIdSet.has(getId(item)));
   return [...ordered, ...remaining];
+}
+
+function normalizeWorktreePathKey(value: string | null | undefined): string | null {
+  const trimmed = value?.trim() ?? "";
+  if (trimmed.length === 0) {
+    return null;
+  }
+  return trimmed.replace(/\\/g, "/").replace(/\/+$/g, "").toLowerCase();
+}
+
+function basenameFromPath(value: string): string {
+  const segments = value.replace(/\\/g, "/").split("/");
+  for (let index = segments.length - 1; index >= 0; index -= 1) {
+    const segment = segments[index];
+    if (segment && segment.length > 0) {
+      return segment;
+    }
+  }
+  return value;
+}
+
+function worktreeMatchKeys(worktree: Pick<GitWorktree, "path" | "realPath">): string[] {
+  return [normalizeWorktreePathKey(worktree.path), normalizeWorktreePathKey(worktree.realPath)]
+    .filter((value): value is string => value !== null)
+    .toSorted();
+}
+
+export function deriveExternalWorktreeRows(input: {
+  worktrees: readonly GitWorktree[];
+  projectCwd: string;
+  existingThreads: readonly { worktreePath: string | null }[];
+  draftThreads: readonly { worktreePath: string | null }[];
+}): ExternalWorktreeRow[] {
+  const linkedPathKeys = new Set<string>();
+  for (const linked of [...input.existingThreads, ...input.draftThreads]) {
+    const key = normalizeWorktreePathKey(linked.worktreePath);
+    if (key) {
+      linkedPathKeys.add(key);
+    }
+  }
+
+  const projectCwdKey = normalizeWorktreePathKey(input.projectCwd);
+  const seenKeys = new Set<string>();
+  const rows: ExternalWorktreeRow[] = [];
+
+  for (const worktree of input.worktrees) {
+    const keys = worktreeMatchKeys(worktree);
+    if (
+      worktree.isCurrent ||
+      (projectCwdKey !== null && keys.includes(projectCwdKey)) ||
+      keys.some((key) => linkedPathKeys.has(key)) ||
+      keys.some((key) => seenKeys.has(key))
+    ) {
+      continue;
+    }
+
+    for (const key of keys) {
+      seenKeys.add(key);
+    }
+
+    const fallbackName = basenameFromPath(worktree.path);
+    rows.push({
+      id: keys[0] ?? worktree.path,
+      path: worktree.path,
+      realPath: worktree.realPath,
+      branch: worktree.branch,
+      head: worktree.head,
+      detached: worktree.detached,
+      lockedReason: worktree.lockedReason,
+      prunableReason: worktree.prunableReason,
+      upstream: worktree.upstream,
+      hasUpstream: worktree.hasUpstream,
+      disabled: worktree.prunableReason !== null,
+      stale:
+        worktree.prunableReason !== null ||
+        worktree.detached ||
+        (worktree.branch !== null && !worktree.hasUpstream),
+      staleReason:
+        worktree.prunableReason ??
+        (worktree.detached
+          ? "Detached worktree"
+          : worktree.branch !== null && !worktree.hasUpstream
+            ? "No upstream branch"
+            : null),
+      label: worktree.branch ?? (fallbackName.length > 0 ? fallbackName : "Detached worktree"),
+    });
+  }
+
+  return rows.toSorted((left, right) => {
+    if (left.disabled !== right.disabled) {
+      return left.disabled ? 1 : -1;
+    }
+    if (left.stale !== right.stale) {
+      return left.stale ? 1 : -1;
+    }
+    const branchCompare = (left.branch ?? "").localeCompare(right.branch ?? "");
+    if (branchCompare !== 0) {
+      return branchCompare;
+    }
+    return left.path.localeCompare(right.path);
+  });
 }
 
 export function getVisibleSidebarThreadIds<TThreadId>(

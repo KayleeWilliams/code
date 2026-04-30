@@ -912,6 +912,10 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
           observeRpcEffect(WS_METHODS.gitListBranches, git.listBranches(input), {
             "rpc.aggregate": "git",
           }),
+        [WS_METHODS.gitListWorktrees]: (input) =>
+          observeRpcEffect(WS_METHODS.gitListWorktrees, git.listWorktrees(input), {
+            "rpc.aggregate": "git",
+          }),
         [WS_METHODS.gitCreateWorktree]: (input) =>
           observeRpcEffect(
             WS_METHODS.gitCreateWorktree,

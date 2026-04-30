@@ -100,6 +100,12 @@ function createRegisteredGitStatusClient(environmentId: EnvironmentId) {
       ),
       runStackedAction: vi.fn(async () => ({}) as any),
       listBranches: vi.fn(async () => []),
+      listWorktrees: vi.fn(async () => ({
+        isRepo: true,
+        cwd: "/repo",
+        currentPath: "/repo",
+        worktrees: [],
+      })),
       createWorktree: vi.fn(async () => undefined),
       removeWorktree: vi.fn(async () => undefined),
       createBranch: vi.fn(async () => undefined),

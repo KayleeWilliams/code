@@ -3,6 +3,7 @@ import { Schema } from "effect";
 
 import {
   GitCreateWorktreeInput,
+  GitListWorktreesResult,
   GitPreparePullRequestThreadInput,
   GitRunStackedActionResult,
   GitRunStackedActionInput,
@@ -10,6 +11,7 @@ import {
 } from "./git.ts";
 
 const decodeCreateWorktreeInput = Schema.decodeUnknownSync(GitCreateWorktreeInput);
+const decodeListWorktreesResult = Schema.decodeUnknownSync(GitListWorktreesResult);
 const decodePreparePullRequestThreadInput = Schema.decodeUnknownSync(
   GitPreparePullRequestThreadInput,
 );
@@ -40,6 +42,60 @@ describe("GitPreparePullRequestThreadInput", () => {
 
     expect(parsed.reference).toBe("#42");
     expect(parsed.mode).toBe("worktree");
+  });
+});
+
+describe("GitListWorktreesResult", () => {
+  it("decodes worktree inventory payloads", () => {
+    const parsed = decodeListWorktreesResult({
+      isRepo: true,
+      cwd: "/repo",
+      currentPath: "/repo",
+      worktrees: [
+        {
+          path: "/repo",
+          realPath: "/repo",
+          branch: "main",
+          head: "abc123",
+          detached: false,
+          bare: false,
+          lockedReason: null,
+          prunableReason: null,
+          upstream: "origin/main",
+          hasUpstream: true,
+          isCurrent: true,
+        },
+      ],
+    });
+
+    expect(parsed.worktrees[0]?.branch).toBe("main");
+    expect(parsed.worktrees[0]?.isCurrent).toBe(true);
+  });
+
+  it("accepts detached and prunable worktrees", () => {
+    const parsed = decodeListWorktreesResult({
+      isRepo: true,
+      cwd: "/repo",
+      currentPath: "/repo",
+      worktrees: [
+        {
+          path: "/repo/missing",
+          realPath: null,
+          branch: null,
+          head: "abc123",
+          detached: true,
+          bare: false,
+          lockedReason: null,
+          prunableReason: "gitdir file points to non-existent location",
+          upstream: null,
+          hasUpstream: false,
+          isCurrent: false,
+        },
+      ],
+    });
+
+    expect(parsed.worktrees[0]?.branch).toBeNull();
+    expect(parsed.worktrees[0]?.prunableReason).toContain("gitdir");
   });
 });
 

@@ -89,7 +89,22 @@ export const GitBranch = Schema.Struct({
 });
 export type GitBranch = typeof GitBranch.Type;
 
-const GitWorktree = Schema.Struct({
+export const GitWorktree = Schema.Struct({
+  path: TrimmedNonEmptyStringSchema,
+  realPath: Schema.NullOr(TrimmedNonEmptyStringSchema),
+  branch: Schema.NullOr(TrimmedNonEmptyStringSchema),
+  head: Schema.NullOr(TrimmedNonEmptyStringSchema),
+  detached: Schema.Boolean,
+  bare: Schema.Boolean,
+  lockedReason: Schema.NullOr(Schema.String),
+  prunableReason: Schema.NullOr(Schema.String),
+  upstream: Schema.NullOr(TrimmedNonEmptyStringSchema),
+  hasUpstream: Schema.Boolean,
+  isCurrent: Schema.Boolean,
+});
+export type GitWorktree = typeof GitWorktree.Type;
+
+const GitCreatedWorktree = Schema.Struct({
   path: TrimmedNonEmptyStringSchema,
   branch: TrimmedNonEmptyStringSchema,
 });
@@ -136,6 +151,11 @@ export const GitListBranchesInput = Schema.Struct({
   ),
 });
 export type GitListBranchesInput = typeof GitListBranchesInput.Type;
+
+export const GitListWorktreesInput = Schema.Struct({
+  cwd: TrimmedNonEmptyStringSchema,
+});
+export type GitListWorktreesInput = typeof GitListWorktreesInput.Type;
 
 export const GitCreateWorktreeInput = Schema.Struct({
   cwd: TrimmedNonEmptyStringSchema,
@@ -263,9 +283,17 @@ export const GitListBranchesResult = Schema.Struct({
 export type GitListBranchesResult = typeof GitListBranchesResult.Type;
 
 export const GitCreateWorktreeResult = Schema.Struct({
-  worktree: GitWorktree,
+  worktree: GitCreatedWorktree,
 });
 export type GitCreateWorktreeResult = typeof GitCreateWorktreeResult.Type;
+
+export const GitListWorktreesResult = Schema.Struct({
+  isRepo: Schema.Boolean,
+  cwd: TrimmedNonEmptyStringSchema,
+  currentPath: Schema.NullOr(TrimmedNonEmptyStringSchema),
+  worktrees: Schema.Array(GitWorktree),
+});
+export type GitListWorktreesResult = typeof GitListWorktreesResult.Type;
 
 export const GitResolvePullRequestResult = Schema.Struct({
   pullRequest: GitResolvedPullRequest,

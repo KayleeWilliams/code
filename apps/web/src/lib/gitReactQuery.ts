@@ -15,12 +15,15 @@ import { requireEnvironmentConnection } from "../environments/runtime";
 
 const GIT_BRANCHES_STALE_TIME_MS = 15_000;
 const GIT_BRANCHES_REFETCH_INTERVAL_MS = 60_000;
+const GIT_WORKTREES_STALE_TIME_MS = 10_000;
 const GIT_BRANCHES_PAGE_SIZE = 100;
 
 export const gitQueryKeys = {
   all: ["git"] as const,
   branches: (environmentId: EnvironmentId | null, cwd: string | null) =>
     ["git", "branches", environmentId ?? null, cwd] as const,
+  worktrees: (environmentId: EnvironmentId | null, cwd: string | null) =>
+    ["git", "worktrees", environmentId ?? null, cwd] as const,
   branchSearch: (environmentId: EnvironmentId | null, cwd: string | null, query: string) =>
     ["git", "branches", environmentId ?? null, cwd, "search", query] as const,
 };
@@ -45,7 +48,10 @@ export function invalidateGitQueries(
   const environmentId = input?.environmentId ?? null;
   const cwd = input?.cwd ?? null;
   if (cwd !== null) {
-    return queryClient.invalidateQueries({ queryKey: gitQueryKeys.branches(environmentId, cwd) });
+    return Promise.all([
+      queryClient.invalidateQueries({ queryKey: gitQueryKeys.branches(environmentId, cwd) }),
+      queryClient.invalidateQueries({ queryKey: gitQueryKeys.worktrees(environmentId, cwd) }),
+    ]).then(() => undefined);
   }
 
   return queryClient.invalidateQueries({ queryKey: gitQueryKeys.all });
@@ -118,6 +124,28 @@ export function gitResolvePullRequestQueryOptions(input: {
     staleTime: 30_000,
     refetchOnWindowFocus: false,
     refetchOnReconnect: false,
+  });
+}
+
+export function gitListWorktreesQueryOptions(input: {
+  environmentId: EnvironmentId | null;
+  cwd: string | null;
+  enabled?: boolean;
+}) {
+  return queryOptions({
+    queryKey: gitQueryKeys.worktrees(input.environmentId, input.cwd),
+    queryFn: async () => {
+      if (!input.cwd || !input.environmentId) {
+        throw new Error("Git worktrees are unavailable.");
+      }
+      const api = ensureEnvironmentApi(input.environmentId);
+      return api.git.listWorktrees({ cwd: input.cwd });
+    },
+    enabled: input.environmentId !== null && input.cwd !== null && (input.enabled ?? true),
+    staleTime: GIT_WORKTREES_STALE_TIME_MS,
+    refetchOnWindowFocus: true,
+    refetchOnReconnect: true,
+    placeholderData: (previous) => previous,
   });
 }
 

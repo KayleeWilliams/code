@@ -18,6 +18,8 @@ import type {
   GitInitInput,
   GitListBranchesInput,
   GitListBranchesResult,
+  GitListWorktreesInput,
+  GitListWorktreesResult,
   GitPullResult,
   GitRemoveWorktreeInput,
   GitStatusInput,
@@ -231,6 +233,13 @@ export interface GitCoreShape {
   readonly listBranches: (
     input: GitListBranchesInput,
   ) => Effect.Effect<GitListBranchesResult, GitCommandError>;
+
+  /**
+   * List all Git worktrees registered for the repository.
+   */
+  readonly listWorktrees: (
+    input: GitListWorktreesInput,
+  ) => Effect.Effect<GitListWorktreesResult, GitCommandError>;
 
   /**
    * Pull current branch from upstream using fast-forward only.

@@ -1,3 +1,5 @@
+import * as NodeFs from "node:fs/promises";
+import * as NodePath from "node:path";
 import {
   Cache,
   Data,
@@ -19,7 +21,10 @@ import {
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
 import { GitCommandError, type GitBranch } from "@t3tools/contracts";
-import { dedupeRemoteBranchesWithLocalMatches } from "@t3tools/shared/git";
+import {
+  dedupeRemoteBranchesWithLocalMatches,
+  parseGitWorktreePorcelain,
+} from "@t3tools/shared/git";
 import { compactTraceAttributes } from "../../observability/Attributes.ts";
 import { gitCommandDuration, gitCommandsTotal, withMetrics } from "../../observability/Metrics.ts";
 import {
@@ -135,6 +140,13 @@ function splitNullSeparatedPaths(input: string, truncated: boolean): string[] {
   }
 
   return parts.filter((value) => value.length > 0);
+}
+
+function normalizeWorktreePathKey(value: string | null): string | null {
+  if (value === null || value.trim().length === 0) {
+    return null;
+  }
+  return NodePath.resolve(value).replace(/\\/g, "/").replace(/\/+$/g, "").toLowerCase();
 }
 
 function chunkPathsForGitCheckIgnore(relativePaths: readonly string[]): string[][] {
@@ -1943,6 +1955,123 @@ export const makeGitCore = Effect.fn("makeGitCore")(function* (options?: {
     };
   });
 
+  const resolveRealPath = (targetPath: string) =>
+    Effect.tryPromise(() => NodeFs.realpath(targetPath)).pipe(
+      Effect.catch(() => Effect.succeed(null)),
+    );
+
+  const resolveWorktreeUpstream = (worktreePath: string, branch: string | null) => {
+    if (branch === null) {
+      return Effect.succeed(null);
+    }
+
+    return executeGit(
+      "GitCore.listWorktrees.upstream",
+      worktreePath,
+      ["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"],
+      {
+        timeoutMs: 2_000,
+        allowNonZeroExit: true,
+      },
+    ).pipe(
+      Effect.map((result) => {
+        if (result.code !== 0) {
+          return null;
+        }
+        const upstream = result.stdout.trim();
+        return upstream.length > 0 ? upstream : null;
+      }),
+      Effect.catch(() => Effect.succeed(null)),
+    );
+  };
+
+  const listWorktrees: GitCoreShape["listWorktrees"] = Effect.fn("listWorktrees")(
+    function* (input) {
+      const result = yield* executeGit(
+        "GitCore.listWorktrees",
+        input.cwd,
+        ["worktree", "list", "--porcelain"],
+        {
+          timeoutMs: 5_000,
+          allowNonZeroExit: true,
+        },
+      ).pipe(
+        Effect.catchIf(isMissingGitCwdError, () =>
+          Effect.succeed({
+            code: 128,
+            stdout: "",
+            stderr: "fatal: not a git repository",
+            stdoutTruncated: false,
+            stderrTruncated: false,
+          }),
+        ),
+      );
+
+      if (result.code !== 0) {
+        const detail = result.stderr.trim() || result.stdout.trim() || "git worktree list failed";
+        if (detail.toLowerCase().includes("not a git repository")) {
+          return {
+            isRepo: false,
+            cwd: input.cwd,
+            currentPath: null,
+            worktrees: [],
+          };
+        }
+        return yield* createGitCommandError(
+          "GitCore.listWorktrees",
+          input.cwd,
+          ["worktree", "list", "--porcelain"],
+          detail,
+        );
+      }
+
+      const currentRealPath = yield* resolveRealPath(input.cwd);
+      const currentPath = currentRealPath ?? NodePath.resolve(input.cwd);
+      const currentKeys = new Set(
+        [normalizeWorktreePathKey(input.cwd), normalizeWorktreePathKey(currentPath)].filter(
+          (value): value is string => value !== null,
+        ),
+      );
+
+      const worktrees = yield* Effect.forEach(
+        parseGitWorktreePorcelain(result.stdout),
+        (worktree) =>
+          Effect.gen(function* () {
+            const realPath = yield* resolveRealPath(worktree.path);
+            const worktreeKeys = [
+              normalizeWorktreePathKey(worktree.path),
+              normalizeWorktreePathKey(realPath),
+            ].filter((value): value is string => value !== null);
+            const upstream =
+              worktree.prunableReason === null
+                ? yield* resolveWorktreeUpstream(worktree.path, worktree.branch)
+                : null;
+            return {
+              path: worktree.path,
+              realPath,
+              branch: worktree.branch,
+              head: worktree.head,
+              detached: worktree.detached,
+              bare: worktree.bare,
+              lockedReason: worktree.lockedReason,
+              prunableReason: worktree.prunableReason,
+              upstream,
+              hasUpstream: upstream !== null,
+              isCurrent: worktreeKeys.some((key) => currentKeys.has(key)),
+            };
+          }),
+        { concurrency: "unbounded" },
+      );
+
+      return {
+        isRepo: true,
+        cwd: input.cwd,
+        currentPath,
+        worktrees: [...worktrees],
+      };
+    },
+  );
+
   const createWorktree: GitCoreShape["createWorktree"] = Effect.fn("createWorktree")(
     function* (input) {
       const targetBranch = input.newBranch ?? input.branch;
@@ -2189,6 +2318,7 @@ export const makeGitCore = Effect.fn("makeGitCore")(function* (options?: {
     listWorkspaceFiles,
     filterIgnoredPaths,
     listBranches,
+    listWorktrees,
     createWorktree,
     fetchPullRequestBranch,
     ensureRemote,

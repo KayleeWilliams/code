@@ -90,6 +90,7 @@ export interface WsRpcClient {
       options?: GitRunStackedActionOptions,
     ) => Promise<GitRunStackedActionResult>;
     readonly listBranches: RpcUnaryMethod<typeof WS_METHODS.gitListBranches>;
+    readonly listWorktrees: RpcUnaryMethod<typeof WS_METHODS.gitListWorktrees>;
     readonly createWorktree: RpcUnaryMethod<typeof WS_METHODS.gitCreateWorktree>;
     readonly removeWorktree: RpcUnaryMethod<typeof WS_METHODS.gitRemoveWorktree>;
     readonly createBranch: RpcUnaryMethod<typeof WS_METHODS.gitCreateBranch>;
@@ -197,6 +198,8 @@ export function createWsRpcClient(transport: WsTransport): WsRpcClient {
       },
       listBranches: (input) =>
         transport.request((client) => client[WS_METHODS.gitListBranches](input)),
+      listWorktrees: (input) =>
+        transport.request((client) => client[WS_METHODS.gitListWorktrees](input)),
       createWorktree: (input) =>
         transport.request((client) => client[WS_METHODS.gitCreateWorktree](input)),
       removeWorktree: (input) =>

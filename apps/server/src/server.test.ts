@@ -2394,6 +2394,13 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
                 nextCursor: null,
                 totalCount: 1,
               }),
+            listWorktrees: () =>
+              Effect.succeed({
+                isRepo: true,
+                cwd: "/repo",
+                currentPath: "/repo",
+                worktrees: [],
+              }),
             createWorktree: () =>
               Effect.succeed({
                 worktree: { path: "/tmp/wt", branch: "feature/demo" },

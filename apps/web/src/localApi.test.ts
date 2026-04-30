@@ -67,6 +67,7 @@ const rpcClientMock = {
     ),
     runStackedAction: vi.fn(),
     listBranches: vi.fn(),
+    listWorktrees: vi.fn(),
     createWorktree: vi.fn(),
     removeWorktree: vi.fn(),
     createBranch: vi.fn(),

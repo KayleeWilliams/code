@@ -21,6 +21,8 @@ import {
   GitInitInput,
   GitListBranchesInput,
   GitListBranchesResult,
+  GitListWorktreesInput,
+  GitListWorktreesResult,
   GitManagerServiceError,
   GitPreparePullRequestThreadInput,
   GitPreparePullRequestThreadResult,
@@ -97,6 +99,7 @@ export const WS_METHODS = {
   gitRefreshStatus: "git.refreshStatus",
   gitRunStackedAction: "git.runStackedAction",
   gitListBranches: "git.listBranches",
+  gitListWorktrees: "git.listWorktrees",
   gitCreateWorktree: "git.createWorktree",
   gitRemoveWorktree: "git.removeWorktree",
   gitCreateBranch: "git.createBranch",
@@ -229,6 +232,12 @@ export const WsGitPreparePullRequestThreadRpc = Rpc.make(WS_METHODS.gitPreparePu
 export const WsGitListBranchesRpc = Rpc.make(WS_METHODS.gitListBranches, {
   payload: GitListBranchesInput,
   success: GitListBranchesResult,
+  error: GitCommandError,
+});
+
+export const WsGitListWorktreesRpc = Rpc.make(WS_METHODS.gitListWorktrees, {
+  payload: GitListWorktreesInput,
+  success: GitListWorktreesResult,
   error: GitCommandError,
 });
 
@@ -381,6 +390,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsGitResolvePullRequestRpc,
   WsGitPreparePullRequestThreadRpc,
   WsGitListBranchesRpc,
+  WsGitListWorktreesRpc,
   WsGitCreateWorktreeRpc,
   WsGitRemoveWorktreeRpc,
   WsGitCreateBranchRpc,

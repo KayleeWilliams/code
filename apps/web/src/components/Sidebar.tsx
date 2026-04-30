@@ -3,8 +3,10 @@ import {
   ArrowUpDownIcon,
   ChevronRightIcon,
   CloudIcon,
+  GitBranchIcon,
   GitPullRequestIcon,
   FolderPlusIcon,
+  PlusIcon,
   SearchIcon,
   SettingsIcon,
   SquarePenIcon,
@@ -20,6 +22,7 @@ import {
 import { ProjectFavicon } from "./ProjectFavicon";
 import { autoAnimate } from "@formkit/auto-animate";
 import React, { useCallback, useEffect, memo, useMemo, useRef, useState } from "react";
+import { useQueries } from "@tanstack/react-query";
 import { useShallow } from "zustand/react/shallow";
 import {
   DndContext,
@@ -59,7 +62,7 @@ import {
 } from "@t3tools/contracts/settings";
 import { usePrimaryEnvironmentId } from "../environments/primary";
 import { isElectron } from "../env";
-import { APP_STAGE_LABEL, APP_VERSION } from "../branding";
+import { APP_BASE_NAME, APP_STAGE_LABEL, APP_VERSION } from "../branding";
 import { isTerminalFocused } from "../lib/terminalFocus";
 import { isMacPlatform, newCommandId } from "../lib/utils";
 import {
@@ -148,6 +151,7 @@ import { useThreadSelectionStore } from "../threadSelectionStore";
 import { useCommandPaletteStore } from "../commandPaletteStore";
 import {
   getSidebarThreadIdsToPrewarm,
+  deriveExternalWorktreeRows,
   resolveAdjacentThreadId,
   isContextMenuPointerDown,
   resolveProjectStatusIndicator,
@@ -160,8 +164,10 @@ import {
   sortProjectsForSidebar,
   useThreadJumpHintVisibility,
   ThreadStatusPill,
+  type ExternalWorktreeRow,
 } from "./Sidebar.logic";
 import { sortThreads } from "../lib/threadSort";
+import { gitListWorktreesQueryOptions } from "../lib/gitReactQuery";
 import { SidebarUpdatePill } from "./sidebar/SidebarUpdatePill";
 import { useCopyToClipboard } from "~/hooks/useCopyToClipboard";
 import { CommandDialogTrigger } from "./ui/command";
@@ -225,6 +231,10 @@ function projectGroupingModeDescription(mode: SidebarProjectGroupingMode): strin
     case "separate":
       return "Every project path gets its own sidebar row.";
   }
+}
+
+function compactSidebarPath(value: string): string {
+  return value;
 }
 
 function buildThreadJumpLabelMap(input: {
@@ -702,12 +712,91 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
   );
 });
 
+interface SidebarExternalWorktreeRowProps {
+  row: ExternalWorktreeRow;
+  member: SidebarProjectGroupMember;
+  handleNewThread: ReturnType<typeof useNewThreadHandler>["handleNewThread"];
+}
+
+const SidebarExternalWorktreeRow = memo(function SidebarExternalWorktreeRow(
+  props: SidebarExternalWorktreeRowProps,
+) {
+  const { row, member, handleNewThread } = props;
+  const tooltip = row.prunableReason
+    ? `Git reports this worktree as prunable: ${row.prunableReason}`
+    : row.staleReason
+      ? `${row.staleReason}: ${row.path}`
+      : `Start thread in this worktree: ${row.path}`;
+  const secondaryText = row.upstream ?? row.staleReason ?? compactSidebarPath(row.path);
+  const handleStart = useCallback(() => {
+    if (row.disabled) {
+      return;
+    }
+    void handleNewThread(scopeProjectRef(member.environmentId, member.id), {
+      branch: row.branch,
+      worktreePath: row.path,
+      envMode: "worktree",
+    });
+  }, [handleNewThread, member.environmentId, member.id, row.branch, row.disabled, row.path]);
+  const buttonRender = useMemo(() => <button type="button" />, []);
+
+  return (
+    <SidebarMenuSubItem className="w-full" data-thread-selection-safe>
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <SidebarMenuSubButton
+              render={buttonRender}
+              data-testid={`external-worktree-row-${row.id}`}
+              data-thread-selection-safe
+              size="sm"
+              aria-disabled={row.disabled}
+              aria-label={
+                row.disabled
+                  ? `Unavailable worktree ${row.label}`
+                  : `Start thread in worktree ${row.label}`
+              }
+              className={`group/worktree h-8 w-full translate-x-0 justify-start px-2 text-left hover:bg-accent hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50 ${
+                row.stale ? "text-muted-foreground/52" : "text-muted-foreground/72"
+              }`}
+              onClick={handleStart}
+            >
+              <span className="flex min-w-0 flex-1 items-center gap-2">
+                <GitBranchIcon className="size-3 shrink-0 text-muted-foreground/70" />
+                <span className="flex min-w-0 flex-1 flex-col gap-0.5">
+                  <span className="flex min-w-0 items-center gap-1">
+                    <span className="truncate text-xs font-medium">{row.label}</span>
+                    {row.detached ? (
+                      <span className="shrink-0 rounded-sm border border-border/70 px-1 font-mono text-[8px] uppercase text-muted-foreground/70">
+                        detached
+                      </span>
+                    ) : null}
+                  </span>
+                  <span className="truncate font-mono text-[9px] text-muted-foreground/45">
+                    {secondaryText}
+                  </span>
+                </span>
+              </span>
+              <PlusIcon className="ml-1 size-3 shrink-0 opacity-0 transition-opacity group-hover/worktree:opacity-100 group-focus-visible/worktree:opacity-100" />
+            </SidebarMenuSubButton>
+          }
+        />
+        <TooltipPopup side="top" className="max-w-80 whitespace-normal leading-tight">
+          {tooltip}
+        </TooltipPopup>
+      </Tooltip>
+    </SidebarMenuSubItem>
+  );
+});
+
 interface SidebarProjectThreadListProps {
   projectKey: string;
+  memberProjects: readonly SidebarProjectGroupMember[];
   projectExpanded: boolean;
   hasOverflowingThreads: boolean;
   hiddenThreadStatus: ThreadStatusPill | null;
   orderedProjectThreadKeys: readonly string[];
+  existingThreads: readonly SidebarThreadSummary[];
   renderedThreads: readonly SidebarThreadSummary[];
   showEmptyThreadState: boolean;
   shouldShowThreadPanel: boolean;
@@ -745,6 +834,7 @@ interface SidebarProjectThreadListProps {
   cancelRename: () => void;
   attemptArchiveThread: (threadRef: ScopedThreadRef) => Promise<void>;
   openPrLink: (event: React.MouseEvent<HTMLElement>, prUrl: string) => void;
+  handleNewThread: ReturnType<typeof useNewThreadHandler>["handleNewThread"];
   expandThreadListForProject: (projectKey: string) => void;
   collapseThreadListForProject: (projectKey: string) => void;
 }
@@ -754,10 +844,12 @@ const SidebarProjectThreadList = memo(function SidebarProjectThreadList(
 ) {
   const {
     projectKey,
+    memberProjects,
     projectExpanded,
     hasOverflowingThreads,
     hiddenThreadStatus,
     orderedProjectThreadKeys,
+    existingThreads,
     renderedThreads,
     showEmptyThreadState,
     shouldShowThreadPanel,
@@ -784,27 +876,80 @@ const SidebarProjectThreadList = memo(function SidebarProjectThreadList(
     cancelRename,
     attemptArchiveThread,
     openPrLink,
+    handleNewThread,
     expandThreadListForProject,
     collapseThreadListForProject,
   } = props;
   const showMoreButtonRender = useMemo(() => <button type="button" />, []);
   const showLessButtonRender = useMemo(() => <button type="button" />, []);
+  const otherWorktreesButtonRender = useMemo(() => <button type="button" />, []);
+  const [showOtherWorktrees, setShowOtherWorktrees] = useState(false);
+  const shouldQueryExternalWorktrees = projectExpanded && shouldShowThreadPanel;
+  const externalWorktreeQueries = useQueries({
+    queries: memberProjects.map((member) =>
+      gitListWorktreesQueryOptions({
+        environmentId: member.environmentId,
+        cwd: member.cwd,
+        enabled: shouldQueryExternalWorktrees,
+      }),
+    ),
+  });
+  const draftWorktreePathSignature = useComposerDraftStore((state) =>
+    Object.values(state.draftThreadsByThreadKey)
+      .map((draftThread) => draftThread.worktreePath ?? "")
+      .filter((worktreePath) => worktreePath.length > 0)
+      .toSorted()
+      .join("\0"),
+  );
+  const draftWorktrees = useMemo(
+    () =>
+      draftWorktreePathSignature.length === 0
+        ? []
+        : draftWorktreePathSignature.split("\0").map((worktreePath) => ({ worktreePath })),
+    [draftWorktreePathSignature],
+  );
+  const externalWorktreeRows = useMemo(() => {
+    const seen = new Set<string>();
+    return memberProjects.flatMap((member, index) => {
+      const query = externalWorktreeQueries[index];
+      const rows = deriveExternalWorktreeRows({
+        worktrees: query?.data?.worktrees ?? [],
+        projectCwd: member.cwd,
+        existingThreads,
+        draftThreads: draftWorktrees,
+      });
+      return rows.flatMap((row) => {
+        if (seen.has(row.id)) {
+          return [];
+        }
+        seen.add(row.id);
+        return [{ row, member }];
+      });
+    });
+  }, [draftWorktrees, existingThreads, externalWorktreeQueries, memberProjects]);
+  const primaryExternalWorktreeRows = useMemo(
+    () => externalWorktreeRows.filter(({ row }) => !row.stale),
+    [externalWorktreeRows],
+  );
+  const otherExternalWorktreeRows = useMemo(
+    () => externalWorktreeRows.filter(({ row }) => row.stale),
+    [externalWorktreeRows],
+  );
+  const externalWorktreeError = externalWorktreeQueries.find((query) => query.isError)?.error;
+  const isLoadingExternalWorktrees =
+    shouldQueryExternalWorktrees && externalWorktreeQueries.some((query) => query.isLoading);
+  const showNoThreads =
+    shouldShowThreadPanel &&
+    showEmptyThreadState &&
+    externalWorktreeRows.length === 0 &&
+    !isLoadingExternalWorktrees &&
+    !externalWorktreeError;
 
   return (
     <SidebarMenuSub
       ref={attachThreadListAutoAnimateRef}
       className="mx-1 my-0 w-full translate-x-0 gap-0.5 overflow-hidden px-1.5 py-0"
     >
-      {shouldShowThreadPanel && showEmptyThreadState ? (
-        <SidebarMenuSubItem className="w-full" data-thread-selection-safe>
-          <div
-            data-thread-selection-safe
-            className="flex h-6 w-full translate-x-0 items-center px-2 text-left text-[10px] text-muted-foreground/60"
-          >
-            <span>No threads yet</span>
-          </div>
-        </SidebarMenuSubItem>
-      ) : null}
       {shouldShowThreadPanel &&
         renderedThreads.map((thread) => {
           const threadKey = scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id));
@@ -837,6 +982,82 @@ const SidebarProjectThreadList = memo(function SidebarProjectThreadList(
             />
           );
         })}
+
+      {shouldShowThreadPanel &&
+        primaryExternalWorktreeRows.map(({ row, member }) => (
+          <SidebarExternalWorktreeRow
+            key={`${member.physicalProjectKey}:${row.id}`}
+            row={row}
+            member={member}
+            handleNewThread={handleNewThread}
+          />
+        ))}
+
+      {shouldShowThreadPanel && otherExternalWorktreeRows.length > 0 ? (
+        <SidebarMenuSubItem className="w-full" data-thread-selection-safe>
+          <SidebarMenuSubButton
+            render={otherWorktreesButtonRender}
+            data-thread-selection-safe
+            size="sm"
+            className="h-6 w-full translate-x-0 justify-start px-2 text-left text-[10px] text-muted-foreground/55 hover:bg-accent hover:text-muted-foreground/80"
+            onClick={() => setShowOtherWorktrees((current) => !current)}
+          >
+            <span className="flex min-w-0 flex-1 items-center gap-1.5">
+              <ChevronRightIcon
+                className={`size-3 shrink-0 transition-transform ${
+                  showOtherWorktrees ? "rotate-90" : ""
+                }`}
+              />
+              <span className="truncate">Other worktrees</span>
+              <span className="font-mono text-[9px] text-muted-foreground/45">
+                {otherExternalWorktreeRows.length}
+              </span>
+            </span>
+          </SidebarMenuSubButton>
+        </SidebarMenuSubItem>
+      ) : null}
+
+      {shouldShowThreadPanel && showOtherWorktrees
+        ? otherExternalWorktreeRows.map(({ row, member }) => (
+            <SidebarExternalWorktreeRow
+              key={`${member.physicalProjectKey}:${row.id}`}
+              row={row}
+              member={member}
+              handleNewThread={handleNewThread}
+            />
+          ))
+        : null}
+
+      {shouldShowThreadPanel && externalWorktreeError ? (
+        <SidebarMenuSubItem className="w-full" data-thread-selection-safe>
+          <button
+            type="button"
+            data-thread-selection-safe
+            className="flex min-h-6 w-full translate-x-0 items-center gap-2 rounded-md px-2 text-left text-[10px] text-destructive/80 hover:bg-destructive/8"
+            onClick={() => {
+              for (const query of externalWorktreeQueries) {
+                if (query.isError) {
+                  void query.refetch();
+                }
+              }
+            }}
+          >
+            <TriangleAlertIcon className="size-3 shrink-0" />
+            <span className="min-w-0 flex-1 truncate">Could not list worktrees</span>
+          </button>
+        </SidebarMenuSubItem>
+      ) : null}
+
+      {showNoThreads ? (
+        <SidebarMenuSubItem className="w-full" data-thread-selection-safe>
+          <div
+            data-thread-selection-safe
+            className="flex h-6 w-full translate-x-0 items-center px-2 text-left text-[10px] text-muted-foreground/60"
+          >
+            <span>No threads yet</span>
+          </div>
+        </SidebarMenuSubItem>
+      ) : null}
 
       {projectExpanded && hasOverflowingThreads && !isThreadListExpanded && (
         <SidebarMenuSubItem className="w-full">
@@ -2041,10 +2262,12 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
 
       <SidebarProjectThreadList
         projectKey={project.projectKey}
+        memberProjects={project.memberProjects}
         projectExpanded={projectExpanded}
         hasOverflowingThreads={hasOverflowingThreads}
         hiddenThreadStatus={hiddenThreadStatus}
         orderedProjectThreadKeys={orderedProjectThreadKeys}
+        existingThreads={visibleProjectThreads}
         renderedThreads={renderedThreads}
         showEmptyThreadState={showEmptyThreadState}
         shouldShowThreadPanel={shouldShowThreadPanel}
@@ -2071,6 +2294,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
         cancelRename={cancelRename}
         attemptArchiveThread={attemptArchiveThread}
         openPrLink={openPrLink}
+        handleNewThread={handleNewThread}
         expandThreadListForProject={expandThreadListForProject}
         collapseThreadListForProject={collapseThreadListForProject}
       />
@@ -2203,22 +2427,6 @@ const SidebarProjectListRow = memo(function SidebarProjectListRow(props: Sidebar
     </SidebarMenuItem>
   );
 });
-
-function T3Wordmark() {
-  return (
-    <svg
-      aria-label="T3"
-      className="h-2.5 w-auto shrink-0 text-foreground"
-      viewBox="15.5309 37 94.3941 56.96"
-      xmlns="http://www.w3.org/2000/svg"
-    >
-      <path
-        d="M33.4509 93V47.56H15.5309V37H64.3309V47.56H46.4109V93H33.4509ZM86.7253 93.96C82.832 93.96 78.9653 93.4533 75.1253 92.44C71.2853 91.3733 68.032 89.88 65.3653 87.96L70.4053 78.04C72.5386 79.5867 75.0186 80.8133 77.8453 81.72C80.672 82.6267 83.5253 83.08 86.4053 83.08C89.6586 83.08 92.2186 82.44 94.0853 81.16C95.952 79.88 96.8853 78.12 96.8853 75.88C96.8853 73.7467 96.0586 72.0667 94.4053 70.84C92.752 69.6133 90.0853 69 86.4053 69H80.4853V60.44L96.0853 42.76L97.5253 47.4H68.1653V37H107.365V45.4L91.8453 63.08L85.2853 59.32H89.0453C95.9253 59.32 101.125 60.8667 104.645 63.96C108.165 67.0533 109.925 71.0267 109.925 75.88C109.925 79.0267 109.099 81.9867 107.445 84.76C105.792 87.48 103.259 89.6933 99.8453 91.4C96.432 93.1067 92.0586 93.96 86.7253 93.96Z"
-        fill="currentColor"
-      />
-    </svg>
-  );
-}
 
 type SortableProjectHandleProps = Pick<
   ReturnType<typeof useSortable>,
@@ -2373,9 +2581,8 @@ const SidebarChromeHeader = memo(function SidebarChromeHeader({
               className="ml-1 flex min-w-0 flex-1 cursor-pointer items-center gap-1 rounded-md outline-hidden ring-ring transition-colors hover:text-foreground focus-visible:ring-2"
               to="/"
             >
-              <T3Wordmark />
-              <span className="truncate text-sm font-medium tracking-tight text-muted-foreground">
-                Code
+              <span className="truncate text-sm font-semibold tracking-tight text-foreground">
+                {APP_BASE_NAME}
               </span>
               <span className="rounded-full bg-muted/50 px-1.5 py-0.5 text-[8px] font-medium uppercase tracking-[0.18em] text-muted-foreground/60">
                 {APP_STAGE_LABEL}
