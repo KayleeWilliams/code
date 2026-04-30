@@ -1744,6 +1744,143 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
       }),
   );
 
+  it.effect("creates PR from feature branch even when it tracks origin/main", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      const remoteDir = yield* createBareRemote();
+      yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+      yield* runGit(repoDir, ["push", "-u", "origin", "main"]);
+      const featureBranch = "feature/sidebar-status-icons";
+      yield* runGit(repoDir, ["checkout", "-b", featureBranch]);
+      yield* runGit(repoDir, ["branch", "--set-upstream-to", "origin/main"]);
+      fs.writeFileSync(path.join(repoDir, "feature.txt"), "feature\n");
+
+      const { manager, ghCalls } = yield* makeManager({
+        ghScenario: {
+          prListSequenceByHeadSelector: {
+            [featureBranch]: [
+              "[]",
+              JSON.stringify([
+                {
+                  number: 77,
+                  title: "Show PR check and thread status indicators in sidebar",
+                  url: "https://github.com/pingdotgg/codething-mvp/pull/77",
+                  baseRefName: "main",
+                  headRefName: featureBranch,
+                  state: "OPEN",
+                  isCrossRepository: false,
+                },
+              ]),
+            ],
+          },
+        },
+      });
+
+      const result = yield* runStackedAction(manager, {
+        cwd: repoDir,
+        action: "commit_push_pr",
+      });
+
+      expect(result.commit.status).toBe("created");
+      expect(result.push.status).toBe("pushed");
+      expect(result.push.setUpstream).toBe(true);
+      expect(result.push.upstreamBranch).toBe(`origin/${featureBranch}`);
+      expect(result.pr.status).toBe("created");
+      expect(result.pr.baseBranch).toBe("main");
+      expect(result.pr.headBranch).toBe(featureBranch);
+      expect(
+        yield* runGit(repoDir, ["rev-parse", "--abbrev-ref", "@{upstream}"]).pipe(
+          Effect.map((result) => result.stdout.trim()),
+        ),
+      ).toBe(`origin/${featureBranch}`);
+      expect(
+        ghCalls.some((call) => call.includes(`pr create --base main --head ${featureBranch}`)),
+      ).toBe(true);
+      expect(ghCalls.some((call) => call.includes("pr create --base main --head main"))).toBe(
+        false,
+      );
+    }),
+  );
+
+  it.effect("pushes clean feature commits before creating PR when tracking origin/main", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      const remoteDir = yield* createBareRemote();
+      yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+      yield* runGit(repoDir, ["push", "-u", "origin", "main"]);
+      const featureBranch = "feature/create-pr-from-misconfigured-upstream";
+      yield* runGit(repoDir, ["checkout", "-b", featureBranch]);
+      yield* runGit(repoDir, ["branch", "--set-upstream-to", "origin/main"]);
+      fs.writeFileSync(path.join(repoDir, "create-pr.txt"), "create pr\n");
+      yield* runGit(repoDir, ["add", "create-pr.txt"]);
+      yield* runGit(repoDir, ["commit", "-m", "Create PR from feature branch"]);
+
+      const { manager, ghCalls } = yield* makeManager({
+        ghScenario: {
+          prListSequenceByHeadSelector: {
+            [featureBranch]: [
+              "[]",
+              JSON.stringify([
+                {
+                  number: 303,
+                  title: "Create PR from feature branch",
+                  url: "https://github.com/pingdotgg/codething-mvp/pull/303",
+                  baseRefName: "main",
+                  headRefName: featureBranch,
+                  state: "OPEN",
+                  isCrossRepository: false,
+                },
+              ]),
+            ],
+          },
+        },
+      });
+
+      const result = yield* runStackedAction(manager, {
+        cwd: repoDir,
+        action: "create_pr",
+      });
+
+      expect(result.commit.status).toBe("skipped_not_requested");
+      expect(result.push.status).toBe("pushed");
+      expect(result.push.setUpstream).toBe(true);
+      expect(result.push.upstreamBranch).toBe(`origin/${featureBranch}`);
+      expect(result.pr.status).toBe("created");
+      expect(result.pr.baseBranch).toBe("main");
+      expect(result.pr.headBranch).toBe(featureBranch);
+      expect(
+        ghCalls.some((call) => call.includes(`pr create --base main --head ${featureBranch}`)),
+      ).toBe(true);
+      expect(ghCalls.some((call) => call.includes("pr create --base main --head main"))).toBe(
+        false,
+      );
+    }),
+  );
+
+  it.effect("rejects PR creation when base and head resolve to the same branch", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      const remoteDir = yield* createBareRemote();
+      yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+      yield* runGit(repoDir, ["push", "-u", "origin", "main"]);
+
+      const { manager, ghCalls } = yield* makeManager();
+      const errorMessage = yield* runStackedAction(manager, {
+        cwd: repoDir,
+        action: "create_pr",
+      }).pipe(
+        Effect.flip,
+        Effect.map((error) => error.message),
+      );
+
+      expect(errorMessage).toContain('base branch "main" and head branch "main"');
+      expect(ghCalls.some((call) => call.startsWith("pr create "))).toBe(false);
+    }),
+  );
+
   it.effect("skips push when branch is already up to date", () =>
     Effect.gen(function* () {
       const repoDir = yield* makeTempDir("t3code-git-manager-");

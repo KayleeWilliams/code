@@ -2023,6 +2023,43 @@ it.layer(TestLayer)("git integration", (it) => {
     );
 
     it.effect(
+      "publishes feature branches to their own remote branch when tracking origin main",
+      () =>
+        Effect.gen(function* () {
+          const tmp = yield* makeTmpDir();
+          const remote = yield* makeTmpDir();
+          yield* git(remote, ["init", "--bare"]);
+
+          yield* initRepoWithCommit(tmp);
+          yield* git(tmp, ["remote", "add", "origin", remote]);
+          yield* git(tmp, ["push", "-u", "origin", "main"]);
+
+          const featureBranch = "feature/sidebar-status-icons";
+          yield* git(tmp, ["checkout", "-b", featureBranch]);
+          yield* git(tmp, ["branch", "--set-upstream-to", "origin/main"]);
+          yield* writeTextFile(path.join(tmp, "feature.txt"), "feature branch\n");
+          yield* git(tmp, ["add", "feature.txt"]);
+          yield* git(tmp, ["commit", "-m", "feature commit"]);
+
+          const core = yield* GitCore;
+          const pushed = yield* core.pushCurrentBranch(tmp, null);
+
+          expect(pushed.status).toBe("pushed");
+          expect(pushed.setUpstream).toBe(true);
+          expect(pushed.upstreamBranch).toBe(`origin/${featureBranch}`);
+          expect(yield* git(tmp, ["rev-parse", "--abbrev-ref", "@{upstream}"])).toBe(
+            `origin/${featureBranch}`,
+          );
+          expect(yield* git(tmp, ["ls-remote", "--heads", "origin", featureBranch])).toContain(
+            featureBranch,
+          );
+          expect(yield* git(tmp, ["rev-parse", "origin/main"])).toBe(
+            yield* git(tmp, ["rev-parse", "main"]),
+          );
+        }),
+    );
+
+    it.effect(
       "pushes renamed PR worktree branches to their tracked upstream branch even when push.default is current",
       () =>
         Effect.gen(function* () {

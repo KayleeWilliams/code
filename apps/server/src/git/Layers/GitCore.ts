@@ -23,6 +23,7 @@ import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import { GitCommandError, type GitBranch } from "@t3tools/contracts";
 import {
   dedupeRemoteBranchesWithLocalMatches,
+  isTemporaryWorktreeBranch,
   parseGitWorktreePorcelain,
 } from "@t3tools/shared/git";
 import { compactTraceAttributes } from "../../observability/Attributes.ts";
@@ -41,6 +42,10 @@ import {
   parseRemoteNamesInGitOrder,
   parseRemoteRefWithRemoteNames,
 } from "../remoteRefs.ts";
+import {
+  isSlashRemoteLocalBranchAlias,
+  isSyntheticPullRequestWorktreeBranch,
+} from "../branchHead.ts";
 import { ServerConfig } from "../../config.ts";
 import { decodeJsonResult } from "@t3tools/shared/schemaJson";
 
@@ -346,6 +351,32 @@ function deriveLocalBranchNameFromRemoteRef(branchName: string): string | null {
   }
   const localBranch = branchName.slice(separatorIndex + 1).trim();
   return localBranch.length > 0 ? localBranch : null;
+}
+
+function shouldPublishLocalBranchInsteadOfConfiguredUpstream(input: {
+  branch: string;
+  upstreamBranch: string;
+  remoteName: string;
+}): boolean {
+  if (input.upstreamBranch === input.branch) {
+    return false;
+  }
+  if (isSyntheticPullRequestWorktreeBranch(input.branch)) {
+    return false;
+  }
+  if (isTemporaryWorktreeBranch(input.branch)) {
+    return false;
+  }
+  if (
+    isSlashRemoteLocalBranchAlias({
+      localBranch: input.branch,
+      remoteName: input.remoteName,
+      upstreamBranch: input.upstreamBranch,
+    })
+  ) {
+    return false;
+  }
+  return true;
 }
 
 function commandLabel(args: readonly string[]): string {
@@ -1527,6 +1558,26 @@ export const makeGitCore = Effect.fn("makeGitCore")(function* (options?: {
         Effect.catch(() => Effect.succeed(null)),
       );
       if (currentUpstream) {
+        if (
+          shouldPublishLocalBranchInsteadOfConfiguredUpstream({
+            branch,
+            upstreamBranch: currentUpstream.upstreamBranch,
+            remoteName: currentUpstream.remoteName,
+          })
+        ) {
+          yield* runGit("GitCore.pushCurrentBranch.pushCorrectedUpstream", cwd, [
+            "push",
+            "-u",
+            currentUpstream.remoteName,
+            `HEAD:refs/heads/${branch}`,
+          ]);
+          return {
+            status: "pushed" as const,
+            branch,
+            upstreamBranch: `${currentUpstream.remoteName}/${branch}`,
+            setUpstream: true,
+          };
+        }
         yield* runGit("GitCore.pushCurrentBranch.pushUpstream", cwd, [
           "push",
           currentUpstream.remoteName,

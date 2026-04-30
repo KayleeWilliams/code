@@ -45,6 +45,10 @@ import { GitHubCli, type GitHubPullRequestSummary } from "../Services/GitHubCli.
 import { TextGeneration } from "../Services/TextGeneration.ts";
 import { ProjectSetupScriptRunner } from "../../project/Services/ProjectSetupScriptRunner.ts";
 import { extractBranchNameFromRemoteRef } from "../remoteRefs.ts";
+import {
+  isSlashRemoteLocalBranchAlias,
+  isSyntheticPullRequestWorktreeBranch,
+} from "../branchHead.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import type { GitManagerServiceError } from "@t3tools/contracts";
 import {
@@ -777,10 +781,6 @@ export const makeGitManager = Effect.fn("makeGitManager")(function* () {
     const headBranchFromUpstream = details.upstreamRef
       ? extractBranchNameFromRemoteRef(details.upstreamRef, { remoteName })
       : "";
-    const headBranch = headBranchFromUpstream.length > 0 ? headBranchFromUpstream : details.branch;
-    const shouldProbeLocalBranchSelector =
-      headBranchFromUpstream.length === 0 || headBranch === details.branch;
-
     const [remoteRepository, originRepository] = yield* Effect.all(
       [
         resolveRemoteRepositoryContext(cwd, remoteName),
@@ -797,6 +797,18 @@ export const makeGitManager = Effect.fn("makeGitManager")(function* () {
         : remoteName !== null &&
           remoteName !== "origin" &&
           remoteRepository.repositoryNameWithOwner !== null;
+
+    const shouldUseUpstreamAsHeadBranch =
+      headBranchFromUpstream.length > 0 &&
+      ((isCrossRepository && isSyntheticPullRequestWorktreeBranch(details.branch)) ||
+        isSlashRemoteLocalBranchAlias({
+          localBranch: details.branch,
+          remoteName,
+          upstreamBranch: headBranchFromUpstream,
+        }));
+    const headBranch = shouldUseUpstreamAsHeadBranch ? headBranchFromUpstream : details.branch;
+    const shouldProbeLocalBranchSelector =
+      headBranchFromUpstream.length === 0 || headBranch === details.branch;
 
     const ownerHeadSelector =
       remoteRepository.ownerLogin && headBranch.length > 0
@@ -1263,6 +1275,12 @@ export const makeGitManager = Effect.fn("makeGitManager")(function* () {
     }
 
     const baseBranch = yield* resolveBaseBranch(cwd, branch, details.upstreamRef, headContext);
+    if (baseBranch === headContext.headBranch || baseBranch === headContext.preferredHeadSelector) {
+      return yield* gitManagerError(
+        "runPrStep",
+        `Cannot create a pull request because base branch "${baseBranch}" and head branch "${headContext.preferredHeadSelector}" resolved to the same branch.`,
+      );
+    }
     yield* emit({
       kind: "phase_started",
       phase: "pr",
