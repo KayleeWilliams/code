@@ -43,22 +43,44 @@ type SidebarProject = {
 
 export type ThreadTraversalDirection = "previous" | "next";
 
-export interface ThreadStatusPill {
+export type ThreadStatusIndicatorKind =
+  | "approval"
+  | "input"
+  | "error"
+  | "planning"
+  | "working"
+  | "connecting"
+  | "plan"
+  | "completed";
+
+export interface ThreadStatusIndicator {
+  kind: ThreadStatusIndicatorKind;
   label:
     | "Working"
     | "Connecting"
     | "Completed"
     | "Pending Approval"
     | "Awaiting Input"
+    | "Error"
+    | "Planning"
     | "Plan Ready";
+  tooltip: string;
   colorClass: string;
-  dotClass: string;
-  pulse: boolean;
+  pulse?: boolean;
+  spin?: boolean;
+  priority: number;
 }
 
-const THREAD_STATUS_PRIORITY: Record<ThreadStatusPill["label"], number> = {
-  "Pending Approval": 5,
-  "Awaiting Input": 4,
+export type ThreadStatusPill = ThreadStatusIndicator & {
+  dotClass: string;
+  pulse: boolean;
+};
+
+const THREAD_STATUS_PRIORITY: Record<ThreadStatusIndicator["label"], number> = {
+  Error: 7,
+  "Pending Approval": 6,
+  "Awaiting Input": 5,
+  Planning: 4,
   Working: 3,
   Connecting: 3,
   "Plan Ready": 2,
@@ -448,42 +470,102 @@ export function resolveThreadRowClassName(input: {
 export function resolveThreadStatusPill(input: {
   thread: ThreadStatusInput;
 }): ThreadStatusPill | null {
+  const [status] = resolveThreadStatusIndicators(input);
+  if (!status) {
+    return null;
+  }
+
+  return {
+    ...status,
+    dotClass: colorClassToDotClass(status.colorClass),
+    pulse: status.pulse ?? status.spin ?? false,
+  };
+}
+
+function colorClassToDotClass(colorClass: string): string {
+  if (colorClass.includes("destructive") || colorClass.includes("red")) {
+    return "bg-destructive";
+  }
+  if (colorClass.includes("amber")) {
+    return "bg-amber-500 dark:bg-amber-300/90";
+  }
+  if (colorClass.includes("indigo")) {
+    return "bg-indigo-500 dark:bg-indigo-300/90";
+  }
+  if (colorClass.includes("sky")) {
+    return "bg-sky-500 dark:bg-sky-300/80";
+  }
+  if (colorClass.includes("violet")) {
+    return "bg-violet-500 dark:bg-violet-300/90";
+  }
+  return "bg-emerald-500 dark:bg-emerald-300/90";
+}
+
+export function resolveThreadStatusIndicators(input: {
+  thread: ThreadStatusInput;
+}): ThreadStatusIndicator[] {
   const { thread } = input;
+  const statuses: ThreadStatusIndicator[] = [];
 
   if (thread.hasPendingApprovals) {
-    return {
+    statuses.push({
+      kind: "approval",
       label: "Pending Approval",
+      tooltip: "Pending approval",
       colorClass: "text-amber-600 dark:text-amber-300/90",
-      dotClass: "bg-amber-500 dark:bg-amber-300/90",
-      pulse: false,
-    };
+      priority: THREAD_STATUS_PRIORITY["Pending Approval"],
+    });
   }
 
   if (thread.hasPendingUserInput) {
-    return {
+    statuses.push({
+      kind: "input",
       label: "Awaiting Input",
+      tooltip: "Awaiting input",
       colorClass: "text-indigo-600 dark:text-indigo-300/90",
-      dotClass: "bg-indigo-500 dark:bg-indigo-300/90",
-      pulse: false,
-    };
+      priority: THREAD_STATUS_PRIORITY["Awaiting Input"],
+    });
   }
 
-  if (thread.session?.status === "running") {
-    return {
-      label: "Working",
-      colorClass: "text-sky-600 dark:text-sky-300/80",
-      dotClass: "bg-sky-500 dark:bg-sky-300/80",
+  if (thread.session?.status === "error" || Boolean(thread.session?.lastError)) {
+    statuses.push({
+      kind: "error",
+      label: "Error",
+      tooltip: thread.session?.lastError ?? "Thread error",
+      colorClass: "text-destructive",
+      priority: THREAD_STATUS_PRIORITY.Error,
+    });
+  }
+
+  if (thread.session?.status === "running" && thread.interactionMode === "plan") {
+    statuses.push({
+      kind: "planning",
+      label: "Planning",
+      tooltip: "Planning in progress",
+      colorClass: "text-violet-600 dark:text-violet-300/90",
       pulse: true,
-    };
+      priority: THREAD_STATUS_PRIORITY.Planning,
+    });
+  } else if (thread.session?.status === "running") {
+    statuses.push({
+      kind: "working",
+      label: "Working",
+      tooltip: "Working",
+      colorClass: "text-sky-600 dark:text-sky-300/80",
+      spin: true,
+      priority: THREAD_STATUS_PRIORITY.Working,
+    });
   }
 
   if (thread.session?.status === "connecting") {
-    return {
+    statuses.push({
+      kind: "connecting",
       label: "Connecting",
+      tooltip: "Connecting",
       colorClass: "text-sky-600 dark:text-sky-300/80",
-      dotClass: "bg-sky-500 dark:bg-sky-300/80",
       pulse: true,
-    };
+      priority: THREAD_STATUS_PRIORITY.Connecting,
+    });
   }
 
   const hasPlanReadyPrompt =
@@ -492,24 +574,29 @@ export function resolveThreadStatusPill(input: {
     isLatestTurnSettled(thread.latestTurn, thread.session) &&
     thread.hasActionableProposedPlan;
   if (hasPlanReadyPrompt) {
-    return {
+    statuses.push({
+      kind: "plan",
       label: "Plan Ready",
+      tooltip: "Plan ready",
       colorClass: "text-violet-600 dark:text-violet-300/90",
-      dotClass: "bg-violet-500 dark:bg-violet-300/90",
-      pulse: false,
-    };
+      priority: THREAD_STATUS_PRIORITY["Plan Ready"],
+    });
   }
 
   if (hasUnseenCompletion(thread)) {
-    return {
+    statuses.push({
+      kind: "completed",
       label: "Completed",
+      tooltip: "Completed since last viewed",
       colorClass: "text-emerald-600 dark:text-emerald-300/90",
-      dotClass: "bg-emerald-500 dark:bg-emerald-300/90",
-      pulse: false,
-    };
+      priority: THREAD_STATUS_PRIORITY.Completed,
+    });
   }
 
-  return null;
+  const [highestPriorityStatus] = statuses.toSorted(
+    (left, right) => right.priority - left.priority,
+  );
+  return highestPriorityStatus ? [highestPriorityStatus] : [];
 }
 
 export function resolveProjectStatusIndicator(
@@ -528,6 +615,26 @@ export function resolveProjectStatusIndicator(
   }
 
   return highestPriorityStatus;
+}
+
+export function resolveProjectStatusIndicators(
+  statusGroups: ReadonlyArray<ReadonlyArray<ThreadStatusIndicator>>,
+  limit = 3,
+): ThreadStatusIndicator[] {
+  const byKind = new Map<ThreadStatusIndicatorKind, ThreadStatusIndicator>();
+
+  for (const statuses of statusGroups) {
+    for (const status of statuses) {
+      const current = byKind.get(status.kind);
+      if (!current || status.priority > current.priority) {
+        byKind.set(status.kind, status);
+      }
+    }
+  }
+
+  return Array.from(byKind.values())
+    .toSorted((left, right) => right.priority - left.priority)
+    .slice(0, limit);
 }
 
 export function getVisibleThreadsForProject<T extends Pick<Thread, "id">>(input: {

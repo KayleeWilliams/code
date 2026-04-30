@@ -275,6 +275,147 @@ layer("GitHubCliLive", (it) => {
     }),
   );
 
+  it.effect("lists and summarizes pull request checks", () =>
+    Effect.gen(function* () {
+      mockedRunProcess.mockResolvedValueOnce({
+        stdout: JSON.stringify([
+          {
+            name: " lint ",
+            workflow: " CI ",
+            state: "SUCCESS",
+            bucket: "pass",
+            link: " https://github.com/pingdotgg/codething-mvp/actions/runs/1 ",
+            description: "",
+            startedAt: "2026-04-29T12:00:00Z",
+            completedAt: "2026-04-29T12:01:00Z",
+          },
+          {
+            name: "typecheck",
+            workflow: "CI",
+            state: "FAILURE",
+            bucket: "fail",
+            link: null,
+            description: "TypeScript failed",
+            startedAt: null,
+            completedAt: null,
+          },
+        ]),
+        stderr: "",
+        code: 0,
+        signal: null,
+        timedOut: false,
+      });
+
+      const result = yield* Effect.gen(function* () {
+        const gh = yield* GitHubCli;
+        return yield* gh.listPullRequestChecks({
+          cwd: "/repo",
+          reference: "42",
+        });
+      });
+
+      assert.deepStrictEqual(result, {
+        status: "failing",
+        totalCount: 2,
+        passCount: 1,
+        failCount: 1,
+        pendingCount: 0,
+        skippingCount: 0,
+        cancelCount: 0,
+        checks: [
+          {
+            name: "lint",
+            workflow: "CI",
+            state: "SUCCESS",
+            bucket: "pass",
+            link: "https://github.com/pingdotgg/codething-mvp/actions/runs/1",
+            description: null,
+            startedAt: "2026-04-29T12:00:00Z",
+            completedAt: "2026-04-29T12:01:00Z",
+          },
+          {
+            name: "typecheck",
+            workflow: "CI",
+            state: "FAILURE",
+            bucket: "fail",
+            link: null,
+            description: "TypeScript failed",
+            startedAt: null,
+            completedAt: null,
+          },
+        ],
+      });
+      expect(mockedRunProcess).toHaveBeenCalledWith(
+        "gh",
+        [
+          "pr",
+          "checks",
+          "42",
+          "--json",
+          "bucket,completedAt,description,event,link,name,startedAt,state,workflow",
+        ],
+        expect.objectContaining({ cwd: "/repo", allowNonZeroExit: true }),
+      );
+    }),
+  );
+
+  it.effect("treats pending check exit code as successful output", () =>
+    Effect.gen(function* () {
+      mockedRunProcess.mockResolvedValueOnce({
+        stdout: JSON.stringify([
+          {
+            name: "build",
+            workflow: "CI",
+            state: "QUEUED",
+            bucket: "pending",
+            link: null,
+            description: null,
+            startedAt: null,
+            completedAt: null,
+          },
+        ]),
+        stderr: "",
+        code: 8,
+        signal: null,
+        timedOut: false,
+      });
+
+      const result = yield* Effect.gen(function* () {
+        const gh = yield* GitHubCli;
+        return yield* gh.listPullRequestChecks({
+          cwd: "/repo",
+          reference: "42",
+        });
+      });
+
+      assert.equal(result.status, "pending");
+      assert.equal(result.pendingCount, 1);
+    }),
+  );
+
+  it.effect("rejects invalid pull request checks JSON", () =>
+    Effect.gen(function* () {
+      mockedRunProcess.mockResolvedValueOnce({
+        stdout: "{ invalid",
+        stderr: "",
+        code: 0,
+        signal: null,
+        timedOut: false,
+      });
+
+      const error = yield* Effect.gen(function* () {
+        const gh = yield* GitHubCli;
+        return yield* gh.listPullRequestChecks({
+          cwd: "/repo",
+          reference: "42",
+        });
+      }).pipe(Effect.flip);
+
+      assert.equal(error._tag, "GitHubCliError");
+      assert.equal(error.message.includes("invalid pull request checks JSON"), true);
+    }),
+  );
+
   it.effect("surfaces a friendly error when the pull request is not found", () =>
     Effect.gen(function* () {
       mockedRunProcess.mockRejectedValueOnce(

@@ -14,9 +14,11 @@ import {
   isContextMenuPointerDown,
   orderItemsByPreferredIds,
   resolveProjectStatusIndicator,
+  resolveProjectStatusIndicators,
   resolveSidebarNewThreadSeedContext,
   resolveSidebarNewThreadEnvMode,
   resolveThreadRowClassName,
+  resolveThreadStatusIndicators,
   resolveThreadStatusPill,
   shouldClearThreadSelectionOnMouseDown,
   sortProjectsForSidebar,
@@ -66,6 +68,39 @@ function makeLatestTurn(overrides?: {
     requestedAt: "2026-03-09T10:00:00.000Z",
     startedAt: overrides?.startedAt ?? "2026-03-09T10:00:00.000Z",
     completedAt: overrides?.completedAt ?? "2026-03-09T10:05:00.000Z",
+  };
+}
+
+function makeThreadStatus(
+  label: "Completed" | "Pending Approval" | "Working" | "Planning" | "Plan Ready",
+  input: { colorClass: string; dotClass: string; pulse: boolean },
+) {
+  return {
+    kind:
+      label === "Pending Approval"
+        ? ("approval" as const)
+        : label === "Working"
+          ? ("working" as const)
+          : label === "Planning"
+            ? ("planning" as const)
+            : label === "Plan Ready"
+              ? ("plan" as const)
+              : ("completed" as const),
+    label,
+    tooltip: label,
+    colorClass: input.colorClass,
+    dotClass: input.dotClass,
+    pulse: input.pulse,
+    priority:
+      label === "Pending Approval"
+        ? 6
+        : label === "Planning"
+          ? 4
+          : label === "Working"
+            ? 3
+            : label === "Plan Ready"
+              ? 2
+              : 1,
   };
 }
 
@@ -626,10 +661,21 @@ describe("resolveThreadStatusPill", () => {
     ).toMatchObject({ label: "Awaiting Input", pulse: false });
   });
 
-  it("falls back to working when the thread is actively running without blockers", () => {
+  it("shows planning when a plan-mode thread is actively running without blockers", () => {
     expect(
       resolveThreadStatusPill({
         thread: baseThread,
+      }),
+    ).toMatchObject({ label: "Planning", pulse: true });
+  });
+
+  it("falls back to working when a default-mode thread is actively running without blockers", () => {
+    expect(
+      resolveThreadStatusPill({
+        thread: {
+          ...baseThread,
+          interactionMode: "default",
+        },
       }),
     ).toMatchObject({ label: "Working", pulse: true });
   });
@@ -684,6 +730,38 @@ describe("resolveThreadStatusPill", () => {
       }),
     ).toMatchObject({ label: "Completed", pulse: false });
   });
+
+  it("returns one lifecycle indicator when a thread is blocked and still running", () => {
+    const statuses = resolveThreadStatusIndicators({
+      thread: {
+        ...baseThread,
+        hasPendingApprovals: true,
+      },
+    });
+
+    expect(statuses.map((status) => status.label)).toEqual(["Pending Approval"]);
+  });
+
+  it("prioritizes error indicators over normal activity in project aggregates", () => {
+    const errorStatuses = resolveThreadStatusIndicators({
+      thread: {
+        ...baseThread,
+        session: {
+          ...baseThread.session,
+          status: "error",
+          orchestrationStatus: "error",
+          lastError: "Provider failed",
+        },
+      },
+    });
+    const workingStatuses = resolveThreadStatusIndicators({
+      thread: baseThread,
+    });
+
+    expect(resolveProjectStatusIndicators([workingStatuses, errorStatuses])[0]).toMatchObject({
+      label: "Error",
+    });
+  });
 });
 
 describe("resolveThreadRowClassName", () => {
@@ -718,24 +796,21 @@ describe("resolveProjectStatusIndicator", () => {
   it("surfaces the highest-priority actionable state across project threads", () => {
     expect(
       resolveProjectStatusIndicator([
-        {
-          label: "Completed",
+        makeThreadStatus("Completed", {
           colorClass: "text-emerald-600",
           dotClass: "bg-emerald-500",
           pulse: false,
-        },
-        {
-          label: "Pending Approval",
+        }),
+        makeThreadStatus("Pending Approval", {
           colorClass: "text-amber-600",
           dotClass: "bg-amber-500",
           pulse: false,
-        },
-        {
-          label: "Working",
+        }),
+        makeThreadStatus("Working", {
           colorClass: "text-sky-600",
           dotClass: "bg-sky-500",
           pulse: true,
-        },
+        }),
       ]),
     ).toMatchObject({ label: "Pending Approval", dotClass: "bg-amber-500" });
   });
@@ -743,18 +818,16 @@ describe("resolveProjectStatusIndicator", () => {
   it("prefers plan-ready over completed when no stronger action is needed", () => {
     expect(
       resolveProjectStatusIndicator([
-        {
-          label: "Completed",
+        makeThreadStatus("Completed", {
           colorClass: "text-emerald-600",
           dotClass: "bg-emerald-500",
           pulse: false,
-        },
-        {
-          label: "Plan Ready",
+        }),
+        makeThreadStatus("Plan Ready", {
           colorClass: "text-violet-600",
           dotClass: "bg-violet-500",
           pulse: false,
-        },
+        }),
       ]),
     ).toMatchObject({ label: "Plan Ready", dotClass: "bg-violet-500" });
   });

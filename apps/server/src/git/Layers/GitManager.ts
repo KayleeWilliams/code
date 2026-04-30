@@ -19,6 +19,7 @@ import {
   GitCommandError,
   GitRunStackedActionResult,
   GitStackedAction,
+  type GitPullRequestChecksSummary,
   type GitStatusLocalResult,
   type GitStatusRemoteResult,
   ModelSelection,
@@ -425,6 +426,7 @@ function toStatusPr(pr: PullRequestInfo): {
   baseBranch: string;
   headBranch: string;
   state: "open" | "closed" | "merged";
+  checks?: GitPullRequestChecksSummary | null;
 } {
   return {
     number: pr.number,
@@ -688,7 +690,30 @@ export const makeGitManager = Effect.fn("makeGitManager")(function* () {
             branch: details.branch,
             upstreamRef: details.upstreamRef,
           }).pipe(
-            Effect.map((latest) => (latest ? toStatusPr(latest) : null)),
+            Effect.flatMap((latest) => {
+              if (!latest) {
+                return Effect.succeed(null);
+              }
+
+              const statusPr = toStatusPr(latest);
+              return gitHubCli
+                .listPullRequestChecks({
+                  cwd,
+                  reference: String(latest.number),
+                })
+                .pipe(
+                  Effect.map((checks) => ({
+                    ...statusPr,
+                    checks,
+                  })),
+                  Effect.catch(() =>
+                    Effect.succeed({
+                      ...statusPr,
+                      checks: null,
+                    }),
+                  ),
+                );
+            }),
             Effect.catch(() => Effect.succeed(null)),
           )
         : null;

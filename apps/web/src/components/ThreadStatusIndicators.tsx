@@ -1,6 +1,17 @@
 import { scopeProjectRef, scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime";
-import type { GitStatusResult } from "@t3tools/contracts";
-import { CloudIcon, GitPullRequestIcon, TerminalIcon } from "lucide-react";
+import type { GitPullRequestChecksSummary, GitStatusResult } from "@t3tools/contracts";
+import {
+  CheckIcon,
+  CircleAlertIcon,
+  CircleCheckIcon,
+  Clock3Icon,
+  CloudIcon,
+  GitPullRequestIcon,
+  ListTodoIcon,
+  LoaderCircleIcon,
+  TerminalIcon,
+  XIcon,
+} from "lucide-react";
 import { useMemo } from "react";
 import { usePrimaryEnvironmentId } from "../environments/primary";
 import {
@@ -11,7 +22,11 @@ import { useGitStatus } from "../lib/gitStatusState";
 import { type AppState, selectProjectByRef, useStore } from "../store";
 import { selectThreadTerminalState, useTerminalStateStore } from "../terminalStateStore";
 import { useUiStateStore } from "../uiStateStore";
-import { resolveThreadStatusPill, type ThreadStatusPill } from "./Sidebar.logic";
+import {
+  resolveThreadStatusIndicators,
+  type ThreadStatusIndicator,
+  type ThreadStatusIndicatorKind,
+} from "./Sidebar.logic";
 import type { SidebarThreadSummary } from "../types";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 
@@ -26,6 +41,12 @@ export interface TerminalStatusIndicator {
   label: "Terminal process running";
   colorClass: string;
   pulse: boolean;
+}
+
+export interface CiStatusIndicator {
+  label: string;
+  colorClass: string;
+  tooltip: string;
 }
 
 export type ThreadPr = GitStatusResult["pr"];
@@ -84,41 +105,133 @@ export function terminalStatusFromRunningIds(
   };
 }
 
-export function ThreadStatusLabel({
-  status,
-  compact = false,
+export function ciStatusIndicator(
+  checks: GitPullRequestChecksSummary | null | undefined,
+): CiStatusIndicator | null {
+  if (!checks || checks.totalCount === 0 || checks.status === "unknown") {
+    return null;
+  }
+
+  const countSummary = `${checks.passCount} passed, ${checks.failCount} failed, ${checks.pendingCount} pending`;
+  if (checks.status === "failing") {
+    return {
+      label: "GitHub Actions failing",
+      colorClass: "text-destructive",
+      tooltip: `GitHub Actions failing: ${countSummary}`,
+    };
+  }
+  if (checks.status === "pending") {
+    return {
+      label: "GitHub Actions pending",
+      colorClass: "text-amber-600 dark:text-amber-300/90",
+      tooltip: `GitHub Actions pending: ${countSummary}`,
+    };
+  }
+  if (checks.status === "passing") {
+    return {
+      label: "GitHub Actions passing",
+      colorClass: "text-emerald-600 dark:text-emerald-300/90",
+      tooltip: `GitHub Actions passing: ${checks.passCount}/${checks.totalCount} passed`,
+    };
+  }
+  if (checks.status === "cancelled") {
+    return {
+      label: "GitHub Actions cancelled",
+      colorClass: "text-muted-foreground/70",
+      tooltip: `GitHub Actions cancelled: ${checks.cancelCount}/${checks.totalCount} cancelled`,
+    };
+  }
+  if (checks.status === "skipped") {
+    return {
+      label: "GitHub Actions skipped",
+      colorClass: "text-muted-foreground/60",
+      tooltip: `GitHub Actions skipped: ${checks.skippingCount}/${checks.totalCount} skipped`,
+    };
+  }
+  return null;
+}
+
+function ThreadStatusGlyph({
+  kind,
+  className,
 }: {
-  status: ThreadStatusPill;
-  compact?: boolean;
+  kind: ThreadStatusIndicatorKind;
+  className: string;
 }) {
-  if (compact) {
-    return (
-      <span
-        title={status.label}
-        className={`inline-flex size-3.5 shrink-0 items-center justify-center ${status.colorClass}`}
+  if (kind === "approval") return <CircleAlertIcon className={className} />;
+  if (kind === "input") return <Clock3Icon className={className} />;
+  if (kind === "error") return <CircleAlertIcon className={className} />;
+  if (kind === "planning") return <ListTodoIcon className={className} />;
+  if (kind === "working") return <LoaderCircleIcon className={className} />;
+  if (kind === "connecting") return <LoaderCircleIcon className={className} />;
+  if (kind === "plan") return <ListTodoIcon className={className} />;
+  return <CircleCheckIcon className={className} />;
+}
+
+export function ThreadStatusIcon({ status }: { status: ThreadStatusIndicator }) {
+  const iconClassName = `size-3 ${status.spin ? "animate-spin" : status.pulse ? "animate-pulse" : ""}`;
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <span
+            role="img"
+            aria-label={status.tooltip}
+            className={`inline-flex size-3.5 shrink-0 items-center justify-center ${status.colorClass}`}
+          />
+        }
       >
-        <span
-          className={`size-[9px] rounded-full ${status.dotClass} ${
-            status.pulse ? "animate-pulse" : ""
-          }`}
-        />
-        <span className="sr-only">{status.label}</span>
-      </span>
-    );
+        <ThreadStatusGlyph kind={status.kind} className={iconClassName} />
+      </TooltipTrigger>
+      <TooltipPopup side="top">{status.tooltip}</TooltipPopup>
+    </Tooltip>
+  );
+}
+
+export function ThreadLifecycleStatusIcons({
+  statuses,
+}: {
+  statuses: readonly ThreadStatusIndicator[];
+}) {
+  if (statuses.length === 0) {
+    return null;
   }
 
   return (
-    <span
-      title={status.label}
-      className={`inline-flex items-center gap-1 text-[10px] ${status.colorClass}`}
-    >
-      <span
-        className={`h-1.5 w-1.5 rounded-full ${status.dotClass} ${
-          status.pulse ? "animate-pulse" : ""
-        }`}
-      />
-      <span className="hidden md:inline">{status.label}</span>
-    </span>
+    <>
+      {statuses.map((status) => (
+        <ThreadStatusIcon key={status.kind} status={status} />
+      ))}
+    </>
+  );
+}
+
+export function CiStatusIcon({ status }: { status: CiStatusIndicator }) {
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <span
+            role="img"
+            aria-label={status.tooltip}
+            className={`inline-flex size-3.5 shrink-0 items-center justify-center ${status.colorClass}`}
+          />
+        }
+      >
+        {status.label.includes("failing") ? (
+          <CircleAlertIcon className="size-3" />
+        ) : status.label.includes("pending") ? (
+          <Clock3Icon className="size-3 animate-pulse" />
+        ) : status.label.includes("passing") ? (
+          <CheckIcon className="size-3" />
+        ) : status.label.includes("cancelled") ? (
+          <XIcon className="size-3" />
+        ) : (
+          <CircleCheckIcon className="size-3" />
+        )}
+      </TooltipTrigger>
+      <TooltipPopup side="top">{status.tooltip}</TooltipPopup>
+    </Tooltip>
   );
 }
 
@@ -147,14 +260,15 @@ export function ThreadRowLeadingStatus({ thread }: { thread: SidebarThreadSummar
   });
   const pr = resolveThreadPr(thread.branch, gitStatus.data);
   const prStatus = prStatusIndicator(pr);
-  const threadStatus = resolveThreadStatusPill({
+  const threadStatuses = resolveThreadStatusIndicators({
     thread: {
       ...thread,
       lastVisitedAt,
     },
   });
+  const ciStatus = ciStatusIndicator(pr?.checks);
 
-  if (!prStatus && !threadStatus) {
+  if (!prStatus && threadStatuses.length === 0 && !ciStatus) {
     return null;
   }
 
@@ -175,7 +289,8 @@ export function ThreadRowLeadingStatus({ thread }: { thread: SidebarThreadSummar
           <TooltipPopup side="top">{prStatus.tooltip}</TooltipPopup>
         </Tooltip>
       ) : null}
-      {threadStatus ? <ThreadStatusLabel status={threadStatus} /> : null}
+      {ciStatus ? <CiStatusIcon status={ciStatus} /> : null}
+      <ThreadLifecycleStatusIcons statuses={threadStatuses} />
     </span>
   );
 }

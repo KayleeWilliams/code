@@ -14,10 +14,13 @@ import {
   TriangleAlertIcon,
 } from "lucide-react";
 import {
+  CiStatusIcon,
+  ciStatusIndicator,
   prStatusIndicator,
   resolveThreadPr,
   terminalStatusFromRunningIds,
-  ThreadStatusLabel,
+  ThreadLifecycleStatusIcons,
+  ThreadStatusIcon,
 } from "./ThreadStatusIndicators";
 import { ProjectFavicon } from "./ProjectFavicon";
 import { autoAnimate } from "@formkit/auto-animate";
@@ -154,16 +157,16 @@ import {
   deriveExternalWorktreeRows,
   resolveAdjacentThreadId,
   isContextMenuPointerDown,
-  resolveProjectStatusIndicator,
+  resolveProjectStatusIndicators,
   resolveSidebarNewThreadSeedContext,
   resolveSidebarNewThreadEnvMode,
   resolveThreadRowClassName,
-  resolveThreadStatusPill,
+  resolveThreadStatusIndicators,
   orderItemsByPreferredIds,
   shouldClearThreadSelectionOnMouseDown,
   sortProjectsForSidebar,
   useThreadJumpHintVisibility,
-  ThreadStatusPill,
+  type ThreadStatusIndicator,
   type ExternalWorktreeRow,
 } from "./Sidebar.logic";
 import { sortThreads } from "../lib/threadSort";
@@ -369,7 +372,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
   const isHighlighted = isActive || isSelected;
   const isThreadRunning =
     thread.session?.status === "running" && thread.session.activeTurnId != null;
-  const threadStatus = resolveThreadStatusPill({
+  const threadStatuses = resolveThreadStatusIndicators({
     thread: {
       ...thread,
       lastVisitedAt,
@@ -377,6 +380,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
   });
   const pr = resolveThreadPr(thread.branch, gitStatus.data);
   const prStatus = prStatusIndicator(pr);
+  const ciStatus = ciStatusIndicator(pr?.checks);
   const terminalStatus = terminalStatusFromRunningIds(runningTerminalIds);
   const isConfirmingArchive = confirmingArchiveThreadKey === threadKey && !isThreadRunning;
   const threadMetaClassName = isConfirmingArchive
@@ -557,6 +561,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
         onContextMenu={handleRowContextMenu}
       >
         <div className="flex min-w-0 flex-1 items-center gap-1.5 text-left">
+          <ThreadLifecycleStatusIcons statuses={threadStatuses} />
           {prStatus && (
             <Tooltip>
               <TooltipTrigger
@@ -574,7 +579,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
               <TooltipPopup side="top">{prStatus.tooltip}</TooltipPopup>
             </Tooltip>
           )}
-          {threadStatus && <ThreadStatusLabel status={threadStatus} />}
+          {ciStatus ? <CiStatusIcon status={ciStatus} /> : null}
           {renamingThreadKey === threadKey ? (
             <input
               ref={handleRenameInputRef}
@@ -794,7 +799,7 @@ interface SidebarProjectThreadListProps {
   memberProjects: readonly SidebarProjectGroupMember[];
   projectExpanded: boolean;
   hasOverflowingThreads: boolean;
-  hiddenThreadStatus: ThreadStatusPill | null;
+  hiddenThreadStatuses: readonly ThreadStatusIndicator[];
   orderedProjectThreadKeys: readonly string[];
   existingThreads: readonly SidebarThreadSummary[];
   renderedThreads: readonly SidebarThreadSummary[];
@@ -847,7 +852,7 @@ const SidebarProjectThreadList = memo(function SidebarProjectThreadList(
     memberProjects,
     projectExpanded,
     hasOverflowingThreads,
-    hiddenThreadStatus,
+    hiddenThreadStatuses,
     orderedProjectThreadKeys,
     existingThreads,
     renderedThreads,
@@ -1071,7 +1076,7 @@ const SidebarProjectThreadList = memo(function SidebarProjectThreadList(
             }}
           >
             <span className="flex min-w-0 flex-1 items-center gap-2">
-              {hiddenThreadStatus && <ThreadStatusLabel status={hiddenThreadStatus} compact />}
+              <ThreadLifecycleStatusIcons statuses={hiddenThreadStatuses} />
               <span>Show more</span>
             </span>
           </SidebarMenuSubButton>
@@ -1302,18 +1307,18 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
     return counts;
   }, [memberProjectByScopedKey, project.memberProjects, projectThreads]);
 
-  const { projectStatus, visibleProjectThreads, orderedProjectThreadKeys } = useMemo(() => {
+  const { projectStatuses, visibleProjectThreads, orderedProjectThreadKeys } = useMemo(() => {
     const lastVisitedAtByThreadKey = new Map(
       projectThreads.map((thread, index) => [
         scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
         threadLastVisitedAts[index] ?? null,
       ]),
     );
-    const resolveProjectThreadStatus = (thread: SidebarThreadSummary) => {
+    const resolveProjectThreadStatuses = (thread: SidebarThreadSummary) => {
       const lastVisitedAt = lastVisitedAtByThreadKey.get(
         scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
       );
-      return resolveThreadStatusPill({
+      return resolveThreadStatusIndicators({
         thread: {
           ...thread,
           ...(lastVisitedAt !== null && lastVisitedAt !== undefined ? { lastVisitedAt } : {}),
@@ -1324,14 +1329,14 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
       projectThreads.filter((thread) => thread.archivedAt === null),
       threadSortOrder,
     );
-    const projectStatus = resolveProjectStatusIndicator(
-      visibleProjectThreads.map((thread) => resolveProjectThreadStatus(thread)),
+    const projectStatuses = resolveProjectStatusIndicators(
+      visibleProjectThreads.map((thread) => resolveProjectThreadStatuses(thread)),
     );
     return {
       orderedProjectThreadKeys: visibleProjectThreads.map((thread) =>
         scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
       ),
-      projectStatus,
+      projectStatuses,
       visibleProjectThreads,
     };
   }, [projectThreads, threadLastVisitedAts, threadSortOrder]);
@@ -1351,7 +1356,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
 
   const {
     hasOverflowingThreads,
-    hiddenThreadStatus,
+    hiddenThreadStatuses,
     renderedThreads,
     showEmptyThreadState,
     shouldShowThreadPanel,
@@ -1362,11 +1367,11 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
         threadLastVisitedAts[index] ?? null,
       ]),
     );
-    const resolveProjectThreadStatus = (thread: SidebarThreadSummary) => {
+    const resolveProjectThreadStatuses = (thread: SidebarThreadSummary) => {
       const lastVisitedAt = lastVisitedAtByThreadKey.get(
         scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
       );
-      return resolveThreadStatusPill({
+      return resolveThreadStatusIndicators({
         thread: {
           ...thread,
           ...(lastVisitedAt !== null && lastVisitedAt !== undefined ? { lastVisitedAt } : {}),
@@ -1394,8 +1399,8 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
     );
     return {
       hasOverflowingThreads,
-      hiddenThreadStatus: resolveProjectStatusIndicator(
-        hiddenThreads.map((thread) => resolveProjectThreadStatus(thread)),
+      hiddenThreadStatuses: resolveProjectStatusIndicators(
+        hiddenThreads.map((thread) => resolveProjectThreadStatuses(thread)),
       ),
       renderedThreads,
       showEmptyThreadState: projectExpanded && visibleProjectThreads.length === 0,
@@ -2180,18 +2185,10 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
           onKeyDown={handleProjectButtonKeyDown}
           onContextMenu={handleProjectButtonContextMenu}
         >
-          {!projectExpanded && projectStatus ? (
-            <span
-              aria-hidden="true"
-              title={projectStatus.label}
-              className={`-ml-0.5 relative inline-flex size-3.5 shrink-0 items-center justify-center ${projectStatus.colorClass}`}
-            >
+          {!projectExpanded && projectStatuses.length > 0 ? (
+            <span className="-ml-0.5 relative inline-flex size-3.5 shrink-0 items-center justify-center">
               <span className="absolute inset-0 flex items-center justify-center transition-opacity duration-150 group-hover/project-header:opacity-0">
-                <span
-                  className={`size-[9px] rounded-full ${projectStatus.dotClass} ${
-                    projectStatus.pulse ? "animate-pulse" : ""
-                  }`}
-                />
+                <ThreadStatusIcon status={projectStatuses[0]!} />
               </span>
               <ChevronRightIcon className="absolute inset-0 m-auto size-3.5 text-muted-foreground/70 opacity-0 transition-opacity duration-150 group-hover/project-header:opacity-100" />
             </span>
@@ -2265,7 +2262,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
         memberProjects={project.memberProjects}
         projectExpanded={projectExpanded}
         hasOverflowingThreads={hasOverflowingThreads}
-        hiddenThreadStatus={hiddenThreadStatus}
+        hiddenThreadStatuses={hiddenThreadStatuses}
         orderedProjectThreadKeys={orderedProjectThreadKeys}
         existingThreads={visibleProjectThreads}
         renderedThreads={renderedThreads}

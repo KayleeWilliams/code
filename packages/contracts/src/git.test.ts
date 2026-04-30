@@ -5,6 +5,7 @@ import {
   GitCreateWorktreeInput,
   GitListWorktreesResult,
   GitPreparePullRequestThreadInput,
+  GitStatusResult,
   GitRunStackedActionResult,
   GitRunStackedActionInput,
   GitResolvePullRequestResult,
@@ -18,6 +19,7 @@ const decodePreparePullRequestThreadInput = Schema.decodeUnknownSync(
 const decodeRunStackedActionInput = Schema.decodeUnknownSync(GitRunStackedActionInput);
 const decodeRunStackedActionResult = Schema.decodeUnknownSync(GitRunStackedActionResult);
 const decodeResolvePullRequestResult = Schema.decodeUnknownSync(GitResolvePullRequestResult);
+const decodeStatusResult = Schema.decodeUnknownSync(GitStatusResult);
 
 describe("GitCreateWorktreeInput", () => {
   it("accepts omitted newBranch for existing-branch worktrees", () => {
@@ -114,6 +116,88 @@ describe("GitResolvePullRequestResult", () => {
 
     expect(parsed.pullRequest.number).toBe(42);
     expect(parsed.pullRequest.headBranch).toBe("feature/pr-threads");
+  });
+});
+
+describe("GitStatusResult", () => {
+  const baseStatus = {
+    isRepo: true,
+    hasOriginRemote: true,
+    isDefaultBranch: false,
+    branch: "feature/checks",
+    hasWorkingTreeChanges: false,
+    workingTree: {
+      files: [],
+      insertions: 0,
+      deletions: 0,
+    },
+    hasUpstream: true,
+    aheadCount: 0,
+    behindCount: 0,
+  };
+
+  it("decodes pull request checks in status payloads", () => {
+    const parsed = decodeStatusResult({
+      ...baseStatus,
+      pr: {
+        number: 42,
+        title: "Checks",
+        url: "https://github.com/pingdotgg/codething-mvp/pull/42",
+        baseBranch: "main",
+        headBranch: "feature/checks",
+        state: "open",
+        checks: {
+          status: "failing",
+          totalCount: 2,
+          passCount: 1,
+          failCount: 1,
+          pendingCount: 0,
+          skippingCount: 0,
+          cancelCount: 0,
+          checks: [
+            {
+              name: "lint",
+              workflow: "CI",
+              state: "SUCCESS",
+              bucket: "pass",
+              link: "https://github.com/pingdotgg/codething-mvp/actions/runs/1",
+              description: null,
+              startedAt: "2026-04-29T12:00:00.000Z",
+              completedAt: "2026-04-29T12:01:00.000Z",
+            },
+            {
+              name: "typecheck",
+              workflow: "CI",
+              state: "FAILURE",
+              bucket: "fail",
+              link: null,
+              description: "TypeScript failed",
+              startedAt: null,
+              completedAt: null,
+            },
+          ],
+        },
+      },
+    });
+
+    expect(parsed.pr?.checks?.status).toBe("failing");
+    expect(parsed.pr?.checks?.failCount).toBe(1);
+  });
+
+  it("accepts status payloads without pull request checks", () => {
+    const parsed = decodeStatusResult({
+      ...baseStatus,
+      pr: {
+        number: 42,
+        title: "Checks",
+        url: "https://github.com/pingdotgg/codething-mvp/pull/42",
+        baseBranch: "main",
+        headBranch: "feature/checks",
+        state: "open",
+      },
+    });
+
+    expect(parsed.pr?.checks).toBeUndefined();
   });
 });
 

@@ -9,7 +9,11 @@ import { Context } from "effect";
 import type { Effect } from "effect";
 
 import type { ProcessRunResult } from "../../processRunner.ts";
-import type { GitHubCliError, GitHubPullRequestReviewComment } from "@t3tools/contracts";
+import type {
+  GitHubCliError,
+  GitHubPullRequestReviewComment,
+  GitPullRequestChecksSummary,
+} from "@t3tools/contracts";
 
 export interface GitHubPullRequestSummary {
   readonly number: number;
@@ -46,6 +50,7 @@ export interface GitHubCliShape {
     readonly cwd: string;
     readonly args: ReadonlyArray<string>;
     readonly timeoutMs?: number;
+    readonly allowNonZeroExit?: boolean;
   }) => Effect.Effect<ProcessRunResult, GitHubCliError>;
 
   /**
@@ -79,6 +84,14 @@ export interface GitHubCliShape {
   readonly listPullRequestReviewComments: (
     input: GitHubPullRequestReviewCommentsInput,
   ) => Effect.Effect<ReadonlyArray<GitHubPullRequestReviewComment>, GitHubCliError>;
+
+  /**
+   * List and summarize GitHub check runs for a pull request.
+   */
+  readonly listPullRequestChecks: (input: {
+    readonly cwd: string;
+    readonly reference: string;
+  }) => Effect.Effect<GitPullRequestChecksSummary, GitHubCliError>;
 
   /**
    * Create a pull request from branch context and body file.

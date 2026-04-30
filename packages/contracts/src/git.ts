@@ -47,6 +47,36 @@ const GitPushStepStatus = Schema.Literals([
 const GitBranchStepStatus = Schema.Literals(["created", "skipped_not_requested"]);
 const GitPrStepStatus = Schema.Literals(["created", "opened_existing", "skipped_not_requested"]);
 const GitStatusPrState = Schema.Literals(["open", "closed", "merged"]);
+export const GitPullRequestCheckBucket = Schema.Literals([
+  "pass",
+  "fail",
+  "pending",
+  "skipping",
+  "cancel",
+]);
+export type GitPullRequestCheckBucket = typeof GitPullRequestCheckBucket.Type;
+export const GitPullRequestCheckRun = Schema.Struct({
+  name: TrimmedNonEmptyStringSchema,
+  workflow: Schema.NullOr(TrimmedNonEmptyStringSchema),
+  state: TrimmedNonEmptyStringSchema,
+  bucket: GitPullRequestCheckBucket,
+  link: Schema.NullOr(Schema.String),
+  description: Schema.NullOr(Schema.String),
+  startedAt: Schema.NullOr(IsoDateTime),
+  completedAt: Schema.NullOr(IsoDateTime),
+});
+export type GitPullRequestCheckRun = typeof GitPullRequestCheckRun.Type;
+export const GitPullRequestChecksSummary = Schema.Struct({
+  status: Schema.Literals(["passing", "failing", "pending", "skipped", "cancelled", "unknown"]),
+  totalCount: NonNegativeInt,
+  passCount: NonNegativeInt,
+  failCount: NonNegativeInt,
+  pendingCount: NonNegativeInt,
+  skippingCount: NonNegativeInt,
+  cancelCount: NonNegativeInt,
+  checks: Schema.Array(GitPullRequestCheckRun),
+});
+export type GitPullRequestChecksSummary = typeof GitPullRequestChecksSummary.Type;
 const GitPullRequestReference = TrimmedNonEmptyStringSchema;
 const GitPullRequestState = Schema.Literals(["open", "closed", "merged"]);
 const GitPreparePullRequestThreadMode = Schema.Literals(["local", "worktree"]);
@@ -231,6 +261,7 @@ const GitStatusPr = Schema.Struct({
   baseBranch: TrimmedNonEmptyStringSchema,
   headBranch: TrimmedNonEmptyStringSchema,
   state: GitStatusPrState,
+  checks: Schema.optional(Schema.NullOr(GitPullRequestChecksSummary)),
 });
 
 const GitStatusLocalShape = {

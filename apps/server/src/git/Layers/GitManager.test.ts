@@ -8,6 +8,7 @@ import { Effect, FileSystem, Layer, PlatformError, Scope } from "effect";
 import { expect } from "vitest";
 import type {
   GitActionProgressEvent,
+  GitPullRequestChecksSummary,
   GitPreparePullRequestThreadInput,
   ModelSelection,
   ThreadId,
@@ -51,6 +52,8 @@ interface FakeGhScenario {
   };
   repositoryCloneUrls?: Record<string, { url: string; sshUrl: string }>;
   failWith?: GitHubCliError;
+  checks?: GitPullRequestChecksSummary;
+  checksFailWith?: GitHubCliError;
 }
 
 interface FakeGitTextGeneration {
@@ -434,6 +437,19 @@ function createGitHubCliWithFakeGh(scenario: FakeGhScenario = {}): {
       });
     }
 
+    if (args[0] === "pr" && args[1] === "checks") {
+      if (scenario.checksFailWith) {
+        return Effect.fail(scenario.checksFailWith);
+      }
+      return Effect.succeed({
+        stdout: JSON.stringify(scenario.checks?.checks ?? []) + "\n",
+        stderr: "",
+        code: scenario.checks?.status === "pending" ? 8 : 0,
+        signal: null,
+        timedOut: false,
+      });
+    }
+
     if (args[0] === "pr" && args[1] === "checkout") {
       return Effect.try({
         try: () => {
@@ -585,6 +601,23 @@ function createGitHubCliWithFakeGh(scenario: FakeGhScenario = {}): {
           args: ["repo", "view", input.repository, "--json", "nameWithOwner,url,sshUrl"],
         }).pipe(Effect.map((result) => JSON.parse(result.stdout))),
       listPullRequestReviewComments: () => Effect.succeed([]),
+      listPullRequestChecks: (input) => {
+        ghCalls.push(`pr checks ${input.reference}`);
+        return scenario.checksFailWith
+          ? Effect.fail(scenario.checksFailWith)
+          : Effect.succeed(
+              scenario.checks ?? {
+                status: "unknown",
+                totalCount: 0,
+                passCount: 0,
+                failCount: 0,
+                pendingCount: 0,
+                skippingCount: 0,
+                cancelCount: 0,
+                checks: [],
+              },
+            );
+      },
       checkoutPullRequest: (input) =>
         execute({
           cwd: input.cwd,
@@ -702,7 +735,7 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
       expect(status.hasOriginRemote).toBe(true);
       expect(status.isDefaultBranch).toBe(false);
       expect(status.branch).toBe("feature/status-open-pr");
-      expect(status.pr).toEqual({
+      expect(status.pr).toMatchObject({
         number: 13,
         title: "Existing PR",
         url: "https://github.com/pingdotgg/codething-mvp/pull/13",
@@ -710,6 +743,133 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
         headBranch: "feature/status-open-pr",
         state: "open",
       });
+    }),
+  );
+
+  it.effect("status includes pull request check summaries when available", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      yield* runGit(repoDir, ["checkout", "-b", "feature/status-pr-checks"]);
+      const remoteDir = yield* createBareRemote();
+      yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+      yield* runGit(repoDir, ["push", "-u", "origin", "feature/status-pr-checks"]);
+
+      const checks = {
+        status: "failing" as const,
+        totalCount: 2,
+        passCount: 1,
+        failCount: 1,
+        pendingCount: 0,
+        skippingCount: 0,
+        cancelCount: 0,
+        checks: [
+          {
+            name: "lint",
+            workflow: "CI",
+            state: "SUCCESS",
+            bucket: "pass" as const,
+            link: null,
+            description: null,
+            startedAt: null,
+            completedAt: null,
+          },
+          {
+            name: "typecheck",
+            workflow: "CI",
+            state: "FAILURE",
+            bucket: "fail" as const,
+            link: null,
+            description: "TypeScript failed",
+            startedAt: null,
+            completedAt: null,
+          },
+        ],
+      };
+      const { manager, ghCalls } = yield* makeManager({
+        ghScenario: {
+          prListSequence: [
+            JSON.stringify([
+              {
+                number: 31,
+                title: "Existing PR",
+                url: "https://github.com/pingdotgg/codething-mvp/pull/31",
+                baseRefName: "main",
+                headRefName: "feature/status-pr-checks",
+              },
+            ]),
+          ],
+          checks,
+        },
+      });
+
+      const status = yield* manager.status({ cwd: repoDir });
+
+      expect(status.pr).toMatchObject({
+        number: 31,
+        checks,
+      });
+      expect(ghCalls).toContain("pr checks 31");
+    }),
+  );
+
+  it.effect("status keeps PR metadata when pull request checks fail", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      yield* runGit(repoDir, ["checkout", "-b", "feature/status-pr-checks-fail"]);
+      const remoteDir = yield* createBareRemote();
+      yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+      yield* runGit(repoDir, ["push", "-u", "origin", "feature/status-pr-checks-fail"]);
+
+      const { manager } = yield* makeManager({
+        ghScenario: {
+          prListSequence: [
+            JSON.stringify([
+              {
+                number: 32,
+                title: "Existing PR",
+                url: "https://github.com/pingdotgg/codething-mvp/pull/32",
+                baseRefName: "main",
+                headRefName: "feature/status-pr-checks-fail",
+              },
+            ]),
+          ],
+          checksFailWith: new GitHubCliError({
+            operation: "listPullRequestChecks",
+            detail: "checks unavailable",
+          }),
+        },
+      });
+
+      const status = yield* manager.status({ cwd: repoDir });
+
+      expect(status.pr).toMatchObject({
+        number: 32,
+        checks: null,
+      });
+    }),
+  );
+
+  it.effect("status does not fetch pull request checks when no PR exists", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      yield* runGit(repoDir, ["checkout", "-b", "feature/status-no-pr-checks"]);
+      const remoteDir = yield* createBareRemote();
+      yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+      yield* runGit(repoDir, ["push", "-u", "origin", "feature/status-no-pr-checks"]);
+
+      const { manager, ghCalls } = yield* makeManager({
+        ghScenario: {
+          prListSequence: [JSON.stringify([])],
+        },
+      });
+
+      const status = yield* manager.status({ cwd: repoDir });
+
+      expect(status.pr).toBeNull();
+      expect(ghCalls.some((call) => call.startsWith("pr checks "))).toBe(false);
     }),
   );
 
@@ -740,7 +900,7 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
 
       const status = yield* manager.status({ cwd: repoDir });
 
-      expect(status.pr).toEqual({
+      expect(status.pr).toMatchObject({
         number: 14,
         title: "Existing PR title",
         url: "https://github.com/pingdotgg/codething-mvp/pull/14",
@@ -791,7 +951,7 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
 
       const status = yield* manager.status({ cwd: repoDir });
 
-      expect(status.pr).toEqual({
+      expect(status.pr).toMatchObject({
         number: 15,
         title: "Valid PR title",
         url: "https://github.com/pingdotgg/codething-mvp/pull/15",
@@ -840,7 +1000,7 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
 
       const status = yield* manager.status({ cwd: repoDir });
 
-      expect(status.pr).toEqual({
+      expect(status.pr).toMatchObject({
         number: 17,
         title: "Merged PR",
         url: "https://github.com/pingdotgg/codething-mvp/pull/17",
@@ -1028,7 +1188,7 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
 
         const status = yield* manager.status({ cwd: repoDir });
         expect(status.branch).toBe("t3code/pr-488/statemachine");
-        expect(status.pr).toEqual({
+        expect(status.pr).toMatchObject({
           number: 488,
           title: "Rebase this PR on latest main",
           url: "https://github.com/pingdotgg/codething-mvp/pull/488",
@@ -1128,7 +1288,7 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
 
         const status = yield* manager.status({ cwd: repoDir });
         expect(status.branch).toBe("upstream/effect-atom");
-        expect(status.pr).toEqual({
+        expect(status.pr).toMatchObject({
           number: 1618,
           title: "Correct PR",
           url: "https://github.com/pingdotgg/t3code/pull/1618",
@@ -1178,7 +1338,7 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
 
       const status = yield* manager.status({ cwd: repoDir });
       expect(status.branch).toBe("feature/status-merged-pr");
-      expect(status.pr).toEqual({
+      expect(status.pr).toMatchObject({
         number: 22,
         title: "Merged PR",
         url: "https://github.com/pingdotgg/codething-mvp/pull/22",
@@ -1225,7 +1385,7 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
 
       const status = yield* manager.status({ cwd: repoDir });
       expect(status.branch).toBe("feature/status-open-over-merged");
-      expect(status.pr).toEqual({
+      expect(status.pr).toMatchObject({
         number: 46,
         title: "Open PR",
         url: "https://github.com/pingdotgg/codething-mvp/pull/46",
