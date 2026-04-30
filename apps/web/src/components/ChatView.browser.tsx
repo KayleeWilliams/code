@@ -20,6 +20,7 @@ import {
   DEFAULT_SERVER_SETTINGS,
 } from "@t3tools/contracts";
 import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime";
+import { DEFAULT_WORKTREE_BRANCH_PREFIX } from "@t3tools/shared/git";
 import { createModelCapabilities, createModelSelection } from "@t3tools/shared/model";
 import { RouterProvider, createMemoryHistory } from "@tanstack/react-router";
 import { HttpResponse, http, ws } from "msw";
@@ -76,6 +77,7 @@ const REMOTE_ENVIRONMENT_ID = EnvironmentId.make("environment-remote");
 const THREAD_REF = scopeThreadRef(LOCAL_ENVIRONMENT_ID, THREAD_ID);
 const THREAD_KEY = scopedThreadKey(THREAD_REF);
 const UUID_ROUTE_RE = /^\/draft\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+const TEMP_WORKTREE_BRANCH_RE = new RegExp(`^${DEFAULT_WORKTREE_BRANCH_PREFIX}\\/[0-9a-f]{8}$`);
 const PROJECT_DRAFT_KEY = `${LOCAL_ENVIRONMENT_ID}:${PROJECT_ID}`;
 const PROJECT_LOGICAL_KEY = deriveLogicalProjectKeyFromSettings(
   {
@@ -965,6 +967,15 @@ function resolveWsRpc(body: NormalizedWsRpcRequestBody): unknown {
           worktreePath: null,
         },
       ],
+    };
+  }
+  if (tag === WS_METHODS.gitListWorktrees) {
+    const cwd = typeof body.cwd === "string" ? body.cwd : "/repo/project";
+    return {
+      isRepo: true,
+      cwd,
+      currentPath: cwd,
+      worktrees: [],
     };
   }
   if (tag === WS_METHODS.projectsSearchEntries) {
@@ -2416,7 +2427,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
               prepareWorktree: {
                 projectCwd: "/repo/project",
                 baseBranch: "main",
-                branch: expect.stringMatching(/^t3code\/[0-9a-f]{8}$/),
+                branch: expect.stringMatching(TEMP_WORKTREE_BRANCH_RE),
               },
               runSetupScript: true,
             },
@@ -2640,7 +2651,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
               prepareWorktree: {
                 projectCwd: "/repo/project",
                 baseBranch: "main",
-                branch: expect.stringMatching(/^t3code\/[0-9a-f]{8}$/),
+                branch: expect.stringMatching(TEMP_WORKTREE_BRANCH_RE),
               },
               runSetupScript: true,
             },
