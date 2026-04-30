@@ -1,4 +1,13 @@
-import { ArchiveIcon, ArchiveX, LoaderIcon, PlusIcon, RefreshCwIcon } from "lucide-react";
+import {
+  ArchiveIcon,
+  ArchiveX,
+  LoaderIcon,
+  PlayIcon,
+  PlusIcon,
+  RefreshCwIcon,
+  Trash2Icon,
+  UploadIcon,
+} from "lucide-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { type ReactNode, useCallback, useMemo, useRef, useState } from "react";
 import {
@@ -10,7 +19,12 @@ import {
   type ScopedThreadRef,
 } from "@t3tools/contracts";
 import { scopeThreadRef } from "@t3tools/client-runtime";
-import { DEFAULT_UNIFIED_SETTINGS } from "@t3tools/contracts/settings";
+import {
+  DEFAULT_ATTENTION_NOTIFICATION_SOUND_ID,
+  DEFAULT_COMPLETION_NOTIFICATION_SOUND_ID,
+  DEFAULT_UNIFIED_SETTINGS,
+  type NotificationSoundSettings,
+} from "@t3tools/contracts/settings";
 import { createModelSelection } from "@t3tools/shared/model";
 import { Equal } from "effect";
 import { APP_VERSION } from "../../branding";
@@ -48,6 +62,16 @@ import {
   useStore,
 } from "../../store";
 import { formatRelativeTime, formatRelativeTimeLabel } from "../../timestampFormat";
+import {
+  ACCEPTED_NOTIFICATION_SOUND_MIME_TYPES,
+  BUILT_IN_NOTIFICATION_SOUNDS,
+  createCustomNotificationSoundAsset,
+  MAX_CUSTOM_NOTIFICATION_SOUND_COUNT,
+  listNotificationSoundOptions,
+  playNotificationSoundPreview,
+  resolveNotificationSound,
+  validateNotificationSoundUpload,
+} from "../../notificationSounds";
 import { Button } from "../ui/button";
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "../ui/empty";
 import { DraftInput } from "../ui/draft-input";
@@ -108,6 +132,14 @@ const APPEARANCE_FONT_LABELS = {
   monocraft: "Monocraft",
   custom: "Custom",
 } as const;
+
+const NOTIFICATION_SOUND_PLAYBACK_POLICY_LABELS = {
+  background: "Background threads",
+  always: "Always",
+  unseen: "Unseen statuses only",
+} as const;
+
+const NOTIFICATION_SOUND_ACCEPT = ACCEPTED_NOTIFICATION_SOUND_MIME_TYPES.join(",");
 
 const DEFAULT_DRIVER_KIND = ProviderDriverKind.make("codex");
 
@@ -207,6 +239,43 @@ function AboutVersionTitle() {
       <code className="text-[11px] font-medium text-muted-foreground">{APP_VERSION}</code>
     </span>
   );
+}
+
+function readFileAsDataUrl(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.addEventListener("load", () => {
+      if (typeof reader.result === "string") {
+        resolve(reader.result);
+      } else {
+        reject(new Error("Could not read audio file."));
+      }
+    });
+    reader.addEventListener("error", () =>
+      reject(reader.error ?? new Error("Could not read audio file.")),
+    );
+    reader.readAsDataURL(file);
+  });
+}
+
+function withoutCustomNotificationSound(
+  settings: NotificationSoundSettings,
+  soundId: string,
+): NotificationSoundSettings {
+  const attentionSoundId =
+    settings.attentionSoundId === soundId
+      ? DEFAULT_ATTENTION_NOTIFICATION_SOUND_ID
+      : settings.attentionSoundId;
+  const completionSoundId =
+    settings.completionSoundId === soundId
+      ? DEFAULT_COMPLETION_NOTIFICATION_SOUND_ID
+      : settings.completionSoundId;
+  return {
+    ...settings,
+    attentionSoundId,
+    completionSoundId,
+    customSounds: settings.customSounds.filter((sound) => sound.id !== soundId),
+  };
 }
 
 function AboutVersionSection() {
@@ -462,6 +531,9 @@ export function useSettingsRestore(onRestored?: () => void) {
       ...(!Equal.equals(settings.appearance, DEFAULT_UNIFIED_SETTINGS.appearance)
         ? ["Appearance"]
         : []),
+      ...(!Equal.equals(settings.notificationSounds, DEFAULT_UNIFIED_SETTINGS.notificationSounds)
+        ? ["Sounds"]
+        : []),
       ...(settings.addProjectBaseDirectory !== DEFAULT_UNIFIED_SETTINGS.addProjectBaseDirectory
         ? ["Add project base directory"]
         : []),
@@ -485,6 +557,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       settings.defaultThreadEnvMode,
       settings.diffWordWrap,
       settings.enableAssistantStreaming,
+      settings.notificationSounds,
       settings.timestampFormat,
       settings.workspaceDefaults,
       theme,
@@ -512,6 +585,42 @@ export function useSettingsRestore(onRestored?: () => void) {
   };
 }
 
+function NotificationSoundSelect({
+  settings,
+  value,
+  ariaLabel,
+  onValueChange,
+}: {
+  settings: NotificationSoundSettings;
+  value: string;
+  ariaLabel: string;
+  onValueChange: (soundId: string) => void;
+}) {
+  const soundOptions = listNotificationSoundOptions(settings);
+  const selectedSound = resolveNotificationSound(settings, value);
+  return (
+    <Select
+      value={selectedSound.id}
+      onValueChange={(soundId) => {
+        if (soundId) {
+          onValueChange(soundId);
+        }
+      }}
+    >
+      <SelectTrigger className="w-full" aria-label={ariaLabel}>
+        <SelectValue>{selectedSound.label}</SelectValue>
+      </SelectTrigger>
+      <SelectPopup align="end" alignItemWithTrigger={false}>
+        {soundOptions.map((sound) => (
+          <SelectItem hideIndicator key={sound.id} value={sound.id}>
+            {sound.label}
+          </SelectItem>
+        ))}
+      </SelectPopup>
+    </Select>
+  );
+}
+
 export function GeneralSettingsPanel() {
   const { theme, setTheme } = useTheme();
   const settings = useSettings();
@@ -525,6 +634,7 @@ export function GeneralSettingsPanel() {
   >({});
   const [isRefreshingProviders, setIsRefreshingProviders] = useState(false);
   const [isAddInstanceDialogOpen, setIsAddInstanceDialogOpen] = useState(false);
+  const soundUploadInputRef = useRef<HTMLInputElement | null>(null);
   // Collapsible state per provider-instance card, keyed by the instance id.
   // `Record<string, boolean>` so we don't need to preseed an entry for every
   // configured instance — an absent key reads as collapsed. Default-slot
@@ -856,6 +966,57 @@ export function GeneralSettingsPanel() {
     });
   };
 
+  const handleNotificationSoundUpload = useCallback(
+    (file: File | undefined) => {
+      if (!file) return;
+      const validationError = validateNotificationSoundUpload({
+        fileName: file.name,
+        mimeType: file.type,
+        sizeBytes: file.size,
+        existingCustomSoundCount: settings.notificationSounds.customSounds.length,
+      });
+      if (validationError) {
+        toastManager.add(
+          stackedThreadToast({
+            type: "error",
+            title: "Could not add sound",
+            description: validationError,
+          }),
+        );
+        return;
+      }
+
+      void readFileAsDataUrl(file)
+        .then((dataUrl) => {
+          updateSettings({
+            notificationSounds: {
+              ...settings.notificationSounds,
+              customSounds: [
+                ...settings.notificationSounds.customSounds,
+                createCustomNotificationSoundAsset({
+                  fileName: file.name,
+                  mimeType: file.type,
+                  sizeBytes: file.size,
+                  dataUrl,
+                }),
+              ],
+            },
+          });
+        })
+        .catch((error: unknown) => {
+          toastManager.add(
+            stackedThreadToast({
+              type: "error",
+              title: "Could not add sound",
+              description:
+                error instanceof Error ? error.message : "The audio file could not be read.",
+            }),
+          );
+        });
+    },
+    [settings.notificationSounds, updateSettings],
+  );
+
   return (
     <SettingsPageContainer>
       <SettingsSection title="General">
@@ -1107,6 +1268,227 @@ export function GeneralSettingsPanel() {
             />
           }
         />
+
+        <SettingsRow
+          title="Sounds"
+          description="Play a local sound when an agent needs attention or finishes a task."
+          resetAction={
+            !Equal.equals(
+              settings.notificationSounds,
+              DEFAULT_UNIFIED_SETTINGS.notificationSounds,
+            ) ? (
+              <SettingResetButton
+                label="sounds"
+                onClick={() =>
+                  updateSettings({
+                    notificationSounds: DEFAULT_UNIFIED_SETTINGS.notificationSounds,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Switch
+              checked={settings.notificationSounds.enabled}
+              onCheckedChange={(checked) =>
+                updateSettings({
+                  notificationSounds: {
+                    ...settings.notificationSounds,
+                    enabled: Boolean(checked),
+                  },
+                })
+              }
+              aria-label="Enable notification sounds"
+            />
+          }
+        >
+          <div className="mx-auto mt-4 grid w-full max-w-2xl gap-x-6 gap-y-4 pb-4 sm:grid-cols-2">
+            <label className="space-y-1.5">
+              <span className="text-xs font-medium text-foreground">Playback</span>
+              <Select
+                value={settings.notificationSounds.playbackPolicy}
+                onValueChange={(value) => {
+                  if (value === "background" || value === "always" || value === "unseen") {
+                    updateSettings({
+                      notificationSounds: {
+                        ...settings.notificationSounds,
+                        playbackPolicy: value,
+                      },
+                    });
+                  }
+                }}
+              >
+                <SelectTrigger className="w-full" aria-label="Notification sound playback">
+                  <SelectValue>
+                    {
+                      NOTIFICATION_SOUND_PLAYBACK_POLICY_LABELS[
+                        settings.notificationSounds.playbackPolicy
+                      ]
+                    }
+                  </SelectValue>
+                </SelectTrigger>
+                <SelectPopup align="start">
+                  {Object.entries(NOTIFICATION_SOUND_PLAYBACK_POLICY_LABELS).map(
+                    ([value, label]) => (
+                      <SelectItem hideIndicator key={value} value={value}>
+                        {label}
+                      </SelectItem>
+                    ),
+                  )}
+                </SelectPopup>
+              </Select>
+            </label>
+
+            <div className="flex items-end gap-2 sm:self-end">
+              <input
+                ref={soundUploadInputRef}
+                className="sr-only"
+                type="file"
+                accept={NOTIFICATION_SOUND_ACCEPT}
+                onChange={(event) => {
+                  handleNotificationSoundUpload(event.currentTarget.files?.[0]);
+                  event.currentTarget.value = "";
+                }}
+                aria-label="Upload custom notification sound"
+              />
+              <Button
+                className="w-full"
+                variant="outline"
+                onClick={() => soundUploadInputRef.current?.click()}
+                disabled={
+                  settings.notificationSounds.customSounds.length >=
+                  MAX_CUSTOM_NOTIFICATION_SOUND_COUNT
+                }
+              >
+                <UploadIcon className="size-4" />
+                Upload
+              </Button>
+            </div>
+
+            <label className="space-y-1.5">
+              <span className="text-xs font-medium text-foreground">Attention needed</span>
+              <div className="flex gap-2">
+                <NotificationSoundSelect
+                  settings={settings.notificationSounds}
+                  value={settings.notificationSounds.attentionSoundId}
+                  ariaLabel="Attention sound"
+                  onValueChange={(attentionSoundId) =>
+                    updateSettings({
+                      notificationSounds: {
+                        ...settings.notificationSounds,
+                        attentionSoundId,
+                      },
+                    })
+                  }
+                />
+                <Button
+                  size="icon"
+                  variant="outline"
+                  aria-label="Test attention sound"
+                  onClick={() =>
+                    playNotificationSoundPreview(settings.notificationSounds, "attention")
+                  }
+                >
+                  <PlayIcon className="size-4 translate-x-px" />
+                </Button>
+              </div>
+            </label>
+
+            <label className="space-y-1.5">
+              <span className="text-xs font-medium text-foreground">Task completed</span>
+              <div className="flex gap-2">
+                <NotificationSoundSelect
+                  settings={settings.notificationSounds}
+                  value={settings.notificationSounds.completionSoundId}
+                  ariaLabel="Completion sound"
+                  onValueChange={(completionSoundId) =>
+                    updateSettings({
+                      notificationSounds: {
+                        ...settings.notificationSounds,
+                        completionSoundId,
+                      },
+                    })
+                  }
+                />
+                <Button
+                  size="icon"
+                  variant="outline"
+                  aria-label="Test completion sound"
+                  onClick={() =>
+                    playNotificationSoundPreview(settings.notificationSounds, "completion")
+                  }
+                >
+                  <PlayIcon className="size-4 translate-x-px" />
+                </Button>
+              </div>
+            </label>
+          </div>
+
+          <div className="border-t border-border/60 py-3">
+            <div className="mx-auto w-full max-w-2xl">
+              <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
+                <span>
+                  {BUILT_IN_NOTIFICATION_SOUNDS.length} built-in,{" "}
+                  {settings.notificationSounds.customSounds.length} custom
+                </span>
+                <span>MP3, OGG, WAV, WebM, or MP4 up to 512 KiB</span>
+              </div>
+              {settings.notificationSounds.customSounds.length > 0 ? (
+                <div className="mt-3 divide-y divide-border/60 rounded-lg border border-border/70">
+                  {settings.notificationSounds.customSounds.map((sound) => (
+                    <div
+                      key={sound.id}
+                      className="flex items-center justify-between gap-3 px-3 py-2"
+                    >
+                      <div className="min-w-0">
+                        <p className="truncate text-xs font-medium text-foreground">
+                          {sound.label}
+                        </p>
+                        <p className="text-[11px] text-muted-foreground">
+                          {Math.ceil(sound.sizeBytes / 1024)} KiB
+                        </p>
+                      </div>
+                      <div className="flex shrink-0 items-center gap-1">
+                        <Button
+                          size="icon-xs"
+                          variant="ghost"
+                          aria-label={`Test ${sound.label}`}
+                          onClick={() =>
+                            playNotificationSoundPreview(
+                              {
+                                ...settings.notificationSounds,
+                                attentionSoundId: sound.id,
+                              },
+                              "attention",
+                            )
+                          }
+                        >
+                          <PlayIcon className="size-3.5" />
+                        </Button>
+                        <Button
+                          size="icon-xs"
+                          variant="ghost"
+                          aria-label={`Delete ${sound.label}`}
+                          className="text-destructive hover:text-destructive"
+                          onClick={() =>
+                            updateSettings({
+                              notificationSounds: withoutCustomNotificationSound(
+                                settings.notificationSounds,
+                                sound.id,
+                              ),
+                            })
+                          }
+                        >
+                          <Trash2Icon className="size-3.5" />
+                        </Button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : null}
+            </div>
+          </div>
+        </SettingsRow>
 
         <SettingsRow
           title="Task sidebar"

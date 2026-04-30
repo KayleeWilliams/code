@@ -1,10 +1,16 @@
 import type { OrchestrationEvent, ThreadId } from "@t3tools/contracts";
+import type { NotificationSoundKind } from "./notificationSounds";
 
 export interface OrchestrationBatchEffects {
   promoteDraftThreadIds: ThreadId[];
   clearDeletedThreadIds: ThreadId[];
   removeTerminalStateThreadIds: ThreadId[];
   needsProviderInvalidation: boolean;
+  notificationSoundEvents: Array<{
+    kind: NotificationSoundKind;
+    threadId: ThreadId;
+    sequence: number;
+  }>;
 }
 
 export function deriveOrchestrationBatchEffects(
@@ -18,11 +24,32 @@ export function deriveOrchestrationBatchEffects(
       removeTerminalState: boolean;
     }
   >();
+  const notificationSoundEventsByKey = new Map<
+    string,
+    { kind: NotificationSoundKind; threadId: ThreadId; sequence: number }
+  >();
   let needsProviderInvalidation = false;
+
+  const addNotificationSoundEvent = (
+    kind: NotificationSoundKind,
+    threadId: ThreadId,
+    sequence: number,
+  ) => {
+    const key = `${kind}:${threadId}`;
+    const existing = notificationSoundEventsByKey.get(key);
+    if (!existing || sequence < existing.sequence) {
+      notificationSoundEventsByKey.set(key, { kind, threadId, sequence });
+    }
+  };
 
   for (const event of events) {
     switch (event.type) {
-      case "thread.turn-diff-completed":
+      case "thread.turn-diff-completed": {
+        addNotificationSoundEvent("completion", event.payload.threadId, event.sequence);
+        needsProviderInvalidation = true;
+        break;
+      }
+
       case "thread.reverted": {
         needsProviderInvalidation = true;
         break;
@@ -64,6 +91,16 @@ export function deriveOrchestrationBatchEffects(
         break;
       }
 
+      case "thread.activity-appended": {
+        if (
+          event.payload.activity.kind === "approval.requested" ||
+          event.payload.activity.kind === "user-input.requested"
+        ) {
+          addNotificationSoundEvent("attention", event.payload.threadId, event.sequence);
+        }
+        break;
+      }
+
       default: {
         break;
       }
@@ -90,5 +127,8 @@ export function deriveOrchestrationBatchEffects(
     clearDeletedThreadIds,
     removeTerminalStateThreadIds,
     needsProviderInvalidation,
+    notificationSoundEvents: Array.from(notificationSoundEventsByKey.values()).toSorted(
+      (left, right) => left.sequence - right.sequence,
+    ),
   };
 }

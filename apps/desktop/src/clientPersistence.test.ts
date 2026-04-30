@@ -59,6 +59,13 @@ const clientSettings: ClientSettings = {
   confirmThreadDelete: false,
   diffWordWrap: true,
   favorites: [],
+  notificationSounds: {
+    enabled: true,
+    playbackPolicy: "background",
+    attentionSoundId: "minecrat-click",
+    completionSoundId: "note-block-pling",
+    customSounds: [],
+  },
   providerModelPreferences: {},
   sidebarProjectGroupingMode: "repository_path",
   sidebarProjectGroupingOverrides: {

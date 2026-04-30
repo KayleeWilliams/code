@@ -111,6 +111,21 @@ function applyClientSettingsPatch(
             patch.appearance.customFontFamily ?? current.appearance.customFontFamily,
         }
       : current.appearance,
+    notificationSounds: patch.notificationSounds
+      ? {
+          enabled: patch.notificationSounds.enabled ?? current.notificationSounds.enabled,
+          playbackPolicy:
+            patch.notificationSounds.playbackPolicy ?? current.notificationSounds.playbackPolicy,
+          attentionSoundId:
+            patch.notificationSounds.attentionSoundId ??
+            current.notificationSounds.attentionSoundId,
+          completionSoundId:
+            patch.notificationSounds.completionSoundId ??
+            current.notificationSounds.completionSoundId,
+          customSounds:
+            patch.notificationSounds.customSounds ?? current.notificationSounds.customSounds,
+        }
+      : current.notificationSounds,
   };
 }
 
