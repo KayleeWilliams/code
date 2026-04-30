@@ -1340,6 +1340,31 @@ export const makeGitManager = Effect.fn("makeGitManager")(function* () {
     },
   );
 
+  const listPullRequestReviewComments: GitManagerShape["listPullRequestReviewComments"] = Effect.fn(
+    "listPullRequestReviewComments",
+  )(function* (input) {
+    const pullRequestSummary = yield* gitHubCli.getPullRequest({
+      cwd: input.cwd,
+      reference: normalizePullRequestReference(input.reference),
+    });
+    const repository = parseRepositoryNameFromPullRequestUrl(pullRequestSummary.url);
+    if (!repository) {
+      return yield* gitManagerError(
+        "listPullRequestReviewComments",
+        "Could not determine the GitHub repository for this pull request.",
+      );
+    }
+    const comments = yield* gitHubCli.listPullRequestReviewComments({
+      cwd: input.cwd,
+      repository,
+      number: pullRequestSummary.number,
+    });
+    return {
+      pullRequest: toResolvedPullRequest(pullRequestSummary),
+      comments,
+    };
+  });
+
   const preparePullRequestThread: GitManagerShape["preparePullRequestThread"] = Effect.fn(
     "preparePullRequestThread",
   )(function* (input) {
@@ -1726,6 +1751,7 @@ export const makeGitManager = Effect.fn("makeGitManager")(function* () {
     invalidateRemoteStatus,
     invalidateStatus,
     resolvePullRequest,
+    listPullRequestReviewComments,
     preparePullRequestThread,
     runStackedAction,
   } satisfies GitManagerShape;

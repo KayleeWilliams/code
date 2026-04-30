@@ -1,5 +1,5 @@
 import { Effect, Layer, Result, Schema, SchemaIssue } from "effect";
-import { TrimmedNonEmptyString } from "@t3tools/contracts";
+import { TrimmedNonEmptyString, type GitHubPullRequestReviewComment } from "@t3tools/contracts";
 
 import { runProcess } from "../../processRunner.ts";
 import { GitHubCliError } from "@t3tools/contracts";
@@ -73,6 +73,30 @@ const RawGitHubRepositoryCloneUrlsSchema = Schema.Struct({
   sshUrl: TrimmedNonEmptyString,
 });
 
+const RawGitHubPullRequestReviewCommentSchema = Schema.Struct({
+  id: Schema.Union([Schema.Number, Schema.String]),
+  html_url: Schema.optional(Schema.String),
+  user: Schema.optional(
+    Schema.NullOr(
+      Schema.Struct({
+        login: Schema.optional(Schema.String),
+      }),
+    ),
+  ),
+  body: Schema.optional(Schema.String),
+  path: Schema.optional(Schema.NullOr(Schema.String)),
+  line: Schema.optional(Schema.NullOr(Schema.Number)),
+  original_line: Schema.optional(Schema.NullOr(Schema.Number)),
+  side: Schema.optional(Schema.NullOr(Schema.String)),
+  state: Schema.optional(Schema.NullOr(Schema.String)),
+  created_at: Schema.String,
+  updated_at: Schema.String,
+});
+
+const RawGitHubPullRequestReviewCommentsSchema = Schema.Array(
+  RawGitHubPullRequestReviewCommentSchema,
+);
+
 function normalizeRepositoryCloneUrls(
   raw: Schema.Schema.Type<typeof RawGitHubRepositoryCloneUrlsSchema>,
 ): GitHubRepositoryCloneUrls {
@@ -80,6 +104,29 @@ function normalizeRepositoryCloneUrls(
     nameWithOwner: raw.nameWithOwner,
     url: raw.url,
     sshUrl: raw.sshUrl,
+  };
+}
+
+function normalizeReviewComment(
+  raw: Schema.Schema.Type<typeof RawGitHubPullRequestReviewCommentSchema>,
+): GitHubPullRequestReviewComment {
+  const side = raw.side === "LEFT" || raw.side === "RIGHT" ? raw.side : null;
+  const state = raw.state === "PENDING" || raw.state === "SUBMITTED" ? raw.state : null;
+  const rawLine = raw.line ?? raw.original_line ?? null;
+  const line =
+    typeof rawLine === "number" && Number.isFinite(rawLine) ? Math.max(0, rawLine) : null;
+  return {
+    id: String(raw.id),
+    url: raw.html_url?.trim() || "",
+    author: raw.user?.login?.trim() || "unknown",
+    body: raw.body ?? "",
+    path: raw.path ?? null,
+    line,
+    side,
+    state,
+    createdAt: raw.created_at,
+    updatedAt: raw.updated_at,
+    resolved: null,
   };
 }
 
@@ -200,6 +247,26 @@ const makeGitHubCli = Effect.sync(() => {
           ),
         ),
         Effect.map(normalizeRepositoryCloneUrls),
+      ),
+    listPullRequestReviewComments: (input) =>
+      execute({
+        cwd: input.cwd,
+        args: ["api", `repos/${input.repository}/pulls/${input.number}/comments`, "--paginate"],
+      }).pipe(
+        Effect.map((result) => result.stdout.trim()),
+        Effect.flatMap((raw) =>
+          decodeGitHubJson(
+            raw.length > 0 ? raw : "[]",
+            RawGitHubPullRequestReviewCommentsSchema,
+            "getPullRequest",
+            "GitHub CLI returned invalid review comments JSON.",
+          ),
+        ),
+        Effect.map((comments) =>
+          comments
+            .map(normalizeReviewComment)
+            .filter((comment) => comment.url.length > 0 && comment.body.trim().length > 0),
+        ),
       ),
     createPullRequest: (input) =>
       execute({

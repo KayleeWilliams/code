@@ -1,4 +1,4 @@
-import { EnvironmentId, MessageId } from "@t3tools/contracts";
+import { EnvironmentId, MessageId, TurnId } from "@t3tools/contracts";
 import { createRef } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { beforeAll, describe, expect, it, vi } from "vitest";
@@ -185,5 +185,50 @@ describe("MessagesTimeline", () => {
 
     expect(markup).toContain("t3code/apps/web/src/session-logic.ts");
     expect(markup).not.toContain("C:/Users/mike/dev-stuff/t3code/apps/web/src/session-logic.ts");
+  });
+
+  it("keeps assistant changed files collapsed by default", async () => {
+    const { MessagesTimeline } = await import("./MessagesTimeline");
+    const assistantMessageId = MessageId.make("message-assistant-1");
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        timelineEntries={[
+          {
+            id: "entry-1",
+            kind: "message",
+            createdAt: "2026-03-17T19:12:28.000Z",
+            message: {
+              id: assistantMessageId,
+              role: "assistant",
+              text: "Done.",
+              createdAt: "2026-03-17T19:12:28.000Z",
+              streaming: false,
+            },
+          },
+        ]}
+        turnDiffSummaryByAssistantMessageId={
+          new Map([
+            [
+              assistantMessageId,
+              {
+                turnId: TurnId.make("turn-1"),
+                completedAt: "2026-03-17T19:13:28.000Z",
+                files: [
+                  { path: "apps/web/src/index.ts", additions: 2, deletions: 1 },
+                  { path: "apps/web/src/main.ts", additions: 3, deletions: 0 },
+                ],
+              },
+            ],
+          ])
+        }
+      />,
+    );
+
+    expect(markup).toContain("Changed files (2)");
+    expect(markup).toContain("Show files");
+    expect(markup).toContain("View diff");
+    expect(markup).not.toContain("index.ts");
+    expect(markup).not.toContain("main.ts");
   });
 });

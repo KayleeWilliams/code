@@ -1,5 +1,11 @@
 import { Schema } from "effect";
-import { NonNegativeInt, PositiveInt, ThreadId, TrimmedNonEmptyString } from "./baseSchemas.ts";
+import {
+  IsoDateTime,
+  NonNegativeInt,
+  PositiveInt,
+  ThreadId,
+  TrimmedNonEmptyString,
+} from "./baseSchemas.ts";
 
 const TrimmedNonEmptyStringSchema = TrimmedNonEmptyString;
 const GIT_LIST_BRANCHES_MAX_LIMIT = 200;
@@ -171,6 +177,13 @@ export const GitPullRequestRefInput = Schema.Struct({
 });
 export type GitPullRequestRefInput = typeof GitPullRequestRefInput.Type;
 
+export const GitListPullRequestReviewCommentsInput = Schema.Struct({
+  cwd: TrimmedNonEmptyStringSchema,
+  reference: GitPullRequestReference,
+});
+export type GitListPullRequestReviewCommentsInput =
+  typeof GitListPullRequestReviewCommentsInput.Type;
+
 export const GitPreparePullRequestThreadInput = Schema.Struct({
   cwd: TrimmedNonEmptyStringSchema,
   reference: GitPullRequestReference,
@@ -299,6 +312,28 @@ export const GitResolvePullRequestResult = Schema.Struct({
   pullRequest: GitResolvedPullRequest,
 });
 export type GitResolvePullRequestResult = typeof GitResolvePullRequestResult.Type;
+
+export const GitHubPullRequestReviewComment = Schema.Struct({
+  id: TrimmedNonEmptyStringSchema,
+  url: TrimmedNonEmptyStringSchema,
+  author: TrimmedNonEmptyStringSchema,
+  body: Schema.String,
+  path: Schema.NullOr(Schema.String),
+  line: Schema.NullOr(NonNegativeInt),
+  side: Schema.NullOr(Schema.Literals(["LEFT", "RIGHT"])),
+  state: Schema.NullOr(Schema.Literals(["PENDING", "SUBMITTED"])),
+  createdAt: IsoDateTime,
+  updatedAt: IsoDateTime,
+  resolved: Schema.NullOr(Schema.Boolean),
+});
+export type GitHubPullRequestReviewComment = typeof GitHubPullRequestReviewComment.Type;
+
+export const GitListPullRequestReviewCommentsResult = Schema.Struct({
+  pullRequest: GitResolvedPullRequest,
+  comments: Schema.Array(GitHubPullRequestReviewComment),
+});
+export type GitListPullRequestReviewCommentsResult =
+  typeof GitListPullRequestReviewCommentsResult.Type;
 
 export const GitPreparePullRequestThreadResult = Schema.Struct({
   pullRequest: GitResolvedPullRequest,

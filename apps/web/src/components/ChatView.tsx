@@ -4,6 +4,7 @@ import {
   defaultInstanceIdForDriver,
   type EnvironmentId,
   type MessageId,
+  type GitHubPullRequestReviewComment,
   type ModelSelection,
   type ProjectScript,
   type ProjectId,
@@ -147,7 +148,6 @@ import { type ExpandedImagePreview } from "./chat/ExpandedImagePreview";
 import { NoActiveThreadState } from "./NoActiveThreadState";
 import { resolveEffectiveEnvMode, resolveEnvironmentOptionLabel } from "./BranchToolbar.logic";
 import { ProviderStatusBanner } from "./chat/ProviderStatusBanner";
-import { ThreadErrorBanner } from "./chat/ThreadErrorBanner";
 import {
   MAX_HIDDEN_MOUNTED_TERMINAL_THREADS,
   buildExpiredTerminalContextToastCopy,
@@ -180,6 +180,17 @@ import {
 import { sanitizeThreadErrorMessage } from "~/rpc/transportError";
 import { retainThreadDetailSubscription } from "../environments/runtime/service";
 import { RightPanelSheet } from "./RightPanelSheet";
+import { Button } from "./ui/button";
+import { Checkbox } from "./ui/checkbox";
+import {
+  Dialog,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogPanel,
+  DialogPopup,
+  DialogTitle,
+} from "./ui/dialog";
 
 const IMAGE_ONLY_BOOTSTRAP_PROMPT =
   "[User attached one or more images without additional text. Respond using the conversation context and the attached image(s).]";
@@ -189,6 +200,11 @@ const EMPTY_PROVIDERS: ServerProvider[] = [];
 const EMPTY_PENDING_USER_INPUT_ANSWERS: Record<string, PendingUserInputDraftAnswer> = {};
 
 type ThreadPlanCatalogEntry = Pick<Thread, "id" | "proposedPlans">;
+
+interface ReviewCommentsImportDialogState {
+  pullRequestNumber: number;
+  comments: readonly GitHubPullRequestReviewComment[];
+}
 
 function useThreadPlanCatalog(threadIds: readonly ThreadId[]): ThreadPlanCatalogEntry[] {
   return useStore(
@@ -695,6 +711,12 @@ export default function ChatView(props: ChatViewProps) {
   const [terminalFocusRequestId, setTerminalFocusRequestId] = useState(0);
   const [pullRequestDialogState, setPullRequestDialogState] =
     useState<PullRequestDialogState | null>(null);
+  const [reviewCommentsDialogState, setReviewCommentsDialogState] =
+    useState<ReviewCommentsImportDialogState | null>(null);
+  const [selectedReviewCommentIds, setSelectedReviewCommentIds] = useState<ReadonlySet<string>>(
+    () => new Set(),
+  );
+  const [isImportingReviewComments, setIsImportingReviewComments] = useState(false);
   const [terminalLaunchContext, setTerminalLaunchContext] = useState<TerminalLaunchContext | null>(
     null,
   );
@@ -2695,6 +2717,188 @@ export default function ChatView(props: ChatViewProps) {
     }
   };
 
+  const buildThreadErrorFixPrompt = useCallback(
+    (error: string) =>
+      `The thread hit this error. Diagnose it and fix the underlying issue if possible:\n\n<error>\n${error}\n</error>`,
+    [],
+  );
+
+  const onAskAgentToFixError = useCallback(
+    (error: string) => {
+      const prompt = buildThreadErrorFixPrompt(error);
+      promptRef.current = prompt;
+      setComposerDraftPrompt(composerDraftTarget, prompt);
+      composerRef.current?.resetCursorState({ cursor: prompt.length });
+      if (isWorking || isSendBusy || sendInFlightRef.current) {
+        scheduleComposerFocus();
+        return;
+      }
+      void onSend();
+    },
+    [
+      buildThreadErrorFixPrompt,
+      composerDraftTarget,
+      isSendBusy,
+      isWorking,
+      scheduleComposerFocus,
+      setComposerDraftPrompt,
+    ],
+  );
+
+  const onCopyThreadError = useCallback((error: string) => {
+    void navigator.clipboard
+      .writeText(error)
+      .then(() => {
+        toastManager.add({ type: "success", title: "Error copied" });
+      })
+      .catch(() => {
+        toastManager.add({ type: "error", title: "Could not copy error" });
+      });
+  }, []);
+
+  const formatReviewCommentsPrompt = useCallback(
+    (comments: readonly GitHubPullRequestReviewComment[]) => {
+      const grouped = new Map<string, GitHubPullRequestReviewComment[]>();
+      for (const comment of comments) {
+        const key = comment.path ?? "General";
+        grouped.set(key, [...(grouped.get(key) ?? []), comment]);
+      }
+      const sections = [...grouped.entries()].map(([path, fileComments]) => {
+        const renderedComments = fileComments
+          .map((comment, index) => {
+            const location = comment.line ? `${path}:${comment.line}` : path;
+            return `${index + 1}. ${location}\nAuthor: ${comment.author}\nURL: ${comment.url}\n\n${comment.body.trim()}`;
+          })
+          .join("\n\n");
+        return `## ${path}\n\n${renderedComments}`;
+      });
+      return `Address these GitHub pull request review comments. Preserve existing behavior unless a comment explicitly asks for a behavior change.\n\n${sections.join("\n\n")}`;
+    },
+    [],
+  );
+
+  const groupedReviewComments = useMemo(() => {
+    const grouped = new Map<string, GitHubPullRequestReviewComment[]>();
+    for (const comment of reviewCommentsDialogState?.comments ?? []) {
+      const key = comment.path ?? "General";
+      grouped.set(key, [...(grouped.get(key) ?? []), comment]);
+    }
+    return [...grouped.entries()];
+  }, [reviewCommentsDialogState?.comments]);
+
+  const selectedReviewComments = useMemo(
+    () =>
+      (reviewCommentsDialogState?.comments ?? []).filter((comment) =>
+        selectedReviewCommentIds.has(comment.id),
+      ),
+    [reviewCommentsDialogState?.comments, selectedReviewCommentIds],
+  );
+
+  const closeReviewCommentsDialog = useCallback(() => {
+    setReviewCommentsDialogState(null);
+    setSelectedReviewCommentIds(new Set());
+  }, []);
+
+  const selectReviewComments = useCallback(
+    (comments: readonly GitHubPullRequestReviewComment[]) => {
+      setSelectedReviewCommentIds(new Set(comments.map((comment) => comment.id)));
+    },
+    [],
+  );
+
+  const toggleReviewCommentSelection = useCallback((commentId: string) => {
+    setSelectedReviewCommentIds((current) => {
+      const next = new Set(current);
+      if (next.has(commentId)) {
+        next.delete(commentId);
+      } else {
+        next.add(commentId);
+      }
+      return next;
+    });
+  }, []);
+
+  const confirmReviewCommentsImport = useCallback(() => {
+    if (selectedReviewComments.length === 0) {
+      toastManager.add({
+        type: "info",
+        title: "No comments selected",
+        description: "Select at least one review comment to import.",
+      });
+      return;
+    }
+    const prompt = formatReviewCommentsPrompt(selectedReviewComments);
+    promptRef.current = prompt;
+    setComposerDraftPrompt(composerDraftTarget, prompt);
+    composerRef.current?.resetCursorState({ cursor: prompt.length });
+    scheduleComposerFocus();
+    toastManager.add({
+      type: "success",
+      title: "Review comments imported",
+      description: `${selectedReviewComments.length} comments added to the composer.`,
+    });
+    closeReviewCommentsDialog();
+  }, [
+    closeReviewCommentsDialog,
+    composerDraftTarget,
+    formatReviewCommentsPrompt,
+    scheduleComposerFocus,
+    selectedReviewComments,
+    setComposerDraftPrompt,
+  ]);
+
+  const onImportReviewComments = useCallback(() => {
+    if (!activeProject || !activeThreadBranch || isImportingReviewComments) {
+      return;
+    }
+    const api = readEnvironmentApi(environmentId);
+    if (!api) {
+      return;
+    }
+    setIsImportingReviewComments(true);
+    void api.git
+      .listPullRequestReviewComments({
+        cwd: activeProject.cwd,
+        reference: activeThreadBranch,
+      })
+      .then((result) => {
+        if (result.comments.length === 0) {
+          toastManager.add({
+            type: "info",
+            title: "No review comments found",
+            description: `No review comments were found for PR #${result.pullRequest.number}.`,
+          });
+          return;
+        }
+        const unresolvedComments = result.comments.filter((comment) => comment.resolved === false);
+        const defaultSelection =
+          unresolvedComments.length > 0 ? unresolvedComments : result.comments;
+        setSelectedReviewCommentIds(new Set(defaultSelection.map((comment) => comment.id)));
+        setReviewCommentsDialogState({
+          pullRequestNumber: result.pullRequest.number,
+          comments: result.comments,
+        });
+      })
+      .catch((error: unknown) => {
+        if (activeThreadId) {
+          setThreadError(
+            activeThreadId,
+            error instanceof Error ? error.message : "Failed to import review comments.",
+          );
+        }
+      })
+      .finally(() => {
+        setIsImportingReviewComments(false);
+      });
+  }, [
+    activeProject,
+    activeThreadId,
+    activeThreadBranch,
+    environmentId,
+    isImportingReviewComments,
+    setThreadError,
+  ]);
+
   const onInterrupt = async () => {
     const api = readEnvironmentApi(environmentId);
     if (!api || !activeThread) return;
@@ -3319,15 +3523,16 @@ export default function ChatView(props: ChatViewProps) {
           onDeleteProjectScript={deleteProjectScript}
           onToggleTerminal={toggleTerminalVisibility}
           onToggleDiff={onToggleDiff}
+          {...(activeThreadBranch && activeProject
+            ? {
+                onImportReviewCommentsRequest: onImportReviewComments,
+                isImportingReviewComments,
+              }
+            : {})}
         />
       </header>
 
-      {/* Error banner */}
       <ProviderStatusBanner status={activeProviderStatus} />
-      <ThreadErrorBanner
-        error={activeThread.error}
-        onDismiss={() => setThreadError(activeThread.id, null)}
-      />
       {/* Main content area with optional plan sidebar */}
       <div className="flex min-h-0 min-w-0 flex-1">
         {/* Chat column */}
@@ -3357,6 +3562,10 @@ export default function ChatView(props: ChatViewProps) {
               resolvedTheme={resolvedTheme}
               timestampFormat={timestampFormat}
               workspaceRoot={activeWorkspaceRoot}
+              threadError={activeThread.error}
+              onAskAgentToFixError={onAskAgentToFixError}
+              onCopyThreadError={onCopyThreadError}
+              onDismissThreadError={() => setThreadError(activeThread.id, null)}
               onIsAtEndChange={onIsAtEndChange}
             />
 
@@ -3488,6 +3697,110 @@ export default function ChatView(props: ChatViewProps) {
               }}
               onPrepared={handlePreparedPullRequestThread}
             />
+          ) : null}
+          {reviewCommentsDialogState ? (
+            <Dialog
+              open
+              onOpenChange={(open) => {
+                if (!open) {
+                  closeReviewCommentsDialog();
+                }
+              }}
+            >
+              <DialogPopup className="max-w-2xl">
+                <DialogHeader>
+                  <DialogTitle>Import review comments</DialogTitle>
+                  <DialogDescription>
+                    Select comments from PR #{reviewCommentsDialogState.pullRequestNumber}.
+                  </DialogDescription>
+                </DialogHeader>
+                <DialogPanel className="space-y-4">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Button
+                      type="button"
+                      size="xs"
+                      variant="outline"
+                      onClick={() => selectReviewComments(reviewCommentsDialogState.comments)}
+                    >
+                      Select all
+                    </Button>
+                    <Button
+                      type="button"
+                      size="xs"
+                      variant="outline"
+                      onClick={() => {
+                        const unresolved = reviewCommentsDialogState.comments.filter(
+                          (comment) => comment.resolved === false,
+                        );
+                        selectReviewComments(
+                          unresolved.length > 0 ? unresolved : reviewCommentsDialogState.comments,
+                        );
+                      }}
+                    >
+                      Select unresolved
+                    </Button>
+                    <Button
+                      type="button"
+                      size="xs"
+                      variant="ghost"
+                      onClick={() => setSelectedReviewCommentIds(new Set())}
+                    >
+                      Clear
+                    </Button>
+                    <span className="ml-auto text-muted-foreground text-xs">
+                      {selectedReviewComments.length} selected
+                    </span>
+                  </div>
+                  <div className="space-y-4">
+                    {groupedReviewComments.map(([path, comments]) => (
+                      <section key={path} className="space-y-2">
+                        <h3 className="font-medium text-foreground text-sm">{path}</h3>
+                        <div className="space-y-2">
+                          {comments.map((comment) => {
+                            const location = comment.line ? `${path}:${comment.line}` : path;
+                            return (
+                              <label
+                                key={comment.id}
+                                className="flex cursor-pointer gap-3 rounded-md border border-border/70 bg-background/70 p-3 transition-colors hover:bg-muted/60"
+                              >
+                                <Checkbox
+                                  checked={selectedReviewCommentIds.has(comment.id)}
+                                  onCheckedChange={() => toggleReviewCommentSelection(comment.id)}
+                                  aria-label={`Select review comment at ${location}`}
+                                />
+                                <span className="min-w-0 flex-1">
+                                  <span className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs">
+                                    <span className="font-medium text-foreground">{location}</span>
+                                    <span className="text-muted-foreground">
+                                      by {comment.author}
+                                    </span>
+                                  </span>
+                                  <span className="mt-2 block max-h-28 overflow-auto whitespace-pre-wrap text-muted-foreground text-xs leading-relaxed">
+                                    {comment.body.trim()}
+                                  </span>
+                                </span>
+                              </label>
+                            );
+                          })}
+                        </div>
+                      </section>
+                    ))}
+                  </div>
+                </DialogPanel>
+                <DialogFooter>
+                  <Button type="button" variant="outline" onClick={closeReviewCommentsDialog}>
+                    Cancel
+                  </Button>
+                  <Button
+                    type="button"
+                    disabled={selectedReviewComments.length === 0}
+                    onClick={confirmReviewCommentsImport}
+                  >
+                    Import selected
+                  </Button>
+                </DialogFooter>
+              </DialogPopup>
+            </Dialog>
           ) : null}
         </div>
         {/* end chat column */}

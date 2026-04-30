@@ -41,6 +41,8 @@ interface ChatHeaderProps {
   onDeleteProjectScript: (scriptId: string) => Promise<void>;
   onToggleTerminal: () => void;
   onToggleDiff: () => void;
+  onImportReviewCommentsRequest?: () => void;
+  isImportingReviewComments?: boolean;
 }
 
 export const ChatHeader = memo(function ChatHeader({
@@ -67,6 +69,8 @@ export const ChatHeader = memo(function ChatHeader({
   onDeleteProjectScript,
   onToggleTerminal,
   onToggleDiff,
+  onImportReviewCommentsRequest,
+  isImportingReviewComments = false,
 }: ChatHeaderProps) {
   return (
     <div className="@container/header-actions flex min-w-0 flex-1 items-center gap-2">
@@ -113,6 +117,9 @@ export const ChatHeader = memo(function ChatHeader({
             gitCwd={gitCwd}
             activeThreadRef={scopeThreadRef(activeThreadEnvironmentId, activeThreadId)}
             {...(draftId ? { draftId } : {})}
+            {...(onImportReviewCommentsRequest
+              ? { onImportReviewCommentsRequest, isImportingReviewComments }
+              : {})}
           />
         )}
         <Tooltip>

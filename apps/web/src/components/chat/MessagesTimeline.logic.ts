@@ -35,6 +35,12 @@ export type MessagesTimelineRow =
       createdAt: string;
       proposedPlan: ProposedPlan;
     }
+  | {
+      kind: "thread-error";
+      id: string;
+      createdAt: string;
+      error: string;
+    }
   | { kind: "working"; id: string; createdAt: string | null };
 
 export interface StableMessagesTimelineRowsState {
@@ -112,6 +118,7 @@ export function deriveMessagesTimelineRows(input: {
   completionDividerBeforeEntryId: string | null;
   isWorking: boolean;
   activeTurnStartedAt: string | null;
+  threadError?: string | null;
   turnDiffSummaryByAssistantMessageId: ReadonlyMap<MessageId, TurnDiffSummary>;
   revertTurnCountByUserMessageId: ReadonlyMap<MessageId, number>;
 }): MessagesTimelineRow[] {
@@ -180,6 +187,15 @@ export function deriveMessagesTimelineRows(input: {
     });
   }
 
+  if (input.threadError) {
+    nextRows.push({
+      kind: "thread-error",
+      id: `thread-error:${input.threadError}`,
+      createdAt: new Date(0).toISOString(),
+      error: input.threadError,
+    });
+  }
+
   if (input.isWorking) {
     nextRows.push({
       kind: "working",
@@ -224,6 +240,9 @@ function isRowUnchanged(a: MessagesTimelineRow, b: MessagesTimelineRow): boolean
 
     case "work":
       return a.groupedEntries === (b as typeof a).groupedEntries;
+
+    case "thread-error":
+      return a.error === (b as typeof a).error;
 
     case "message": {
       const bm = b as typeof a;

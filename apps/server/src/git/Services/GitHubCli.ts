@@ -9,7 +9,7 @@ import { Context } from "effect";
 import type { Effect } from "effect";
 
 import type { ProcessRunResult } from "../../processRunner.ts";
-import type { GitHubCliError } from "@t3tools/contracts";
+import type { GitHubCliError, GitHubPullRequestReviewComment } from "@t3tools/contracts";
 
 export interface GitHubPullRequestSummary {
   readonly number: number;
@@ -27,6 +27,12 @@ export interface GitHubRepositoryCloneUrls {
   readonly nameWithOwner: string;
   readonly url: string;
   readonly sshUrl: string;
+}
+
+export interface GitHubPullRequestReviewCommentsInput {
+  readonly cwd: string;
+  readonly repository: string;
+  readonly number: number;
 }
 
 /**
@@ -66,6 +72,13 @@ export interface GitHubCliShape {
     readonly cwd: string;
     readonly repository: string;
   }) => Effect.Effect<GitHubRepositoryCloneUrls, GitHubCliError>;
+
+  /**
+   * List pull request review comments through the GitHub REST API.
+   */
+  readonly listPullRequestReviewComments: (
+    input: GitHubPullRequestReviewCommentsInput,
+  ) => Effect.Effect<ReadonlyArray<GitHubPullRequestReviewComment>, GitHubCliError>;
 
   /**
    * Create a pull request from branch context and body file.

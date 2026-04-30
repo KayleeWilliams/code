@@ -97,6 +97,9 @@ export interface WsRpcClient {
     readonly checkout: RpcUnaryMethod<typeof WS_METHODS.gitCheckout>;
     readonly init: RpcUnaryMethod<typeof WS_METHODS.gitInit>;
     readonly resolvePullRequest: RpcUnaryMethod<typeof WS_METHODS.gitResolvePullRequest>;
+    readonly listPullRequestReviewComments: RpcUnaryMethod<
+      typeof WS_METHODS.gitListPullRequestReviewComments
+    >;
     readonly preparePullRequestThread: RpcUnaryMethod<
       typeof WS_METHODS.gitPreparePullRequestThread
     >;
@@ -210,6 +213,8 @@ export function createWsRpcClient(transport: WsTransport): WsRpcClient {
       init: (input) => transport.request((client) => client[WS_METHODS.gitInit](input)),
       resolvePullRequest: (input) =>
         transport.request((client) => client[WS_METHODS.gitResolvePullRequest](input)),
+      listPullRequestReviewComments: (input) =>
+        transport.request((client) => client[WS_METHODS.gitListPullRequestReviewComments](input)),
       preparePullRequestThread: (input) =>
         transport.request((client) => client[WS_METHODS.gitPreparePullRequestThread](input)),
     },

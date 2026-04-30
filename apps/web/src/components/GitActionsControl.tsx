@@ -7,7 +7,13 @@ import type {
 } from "@t3tools/contracts";
 import { useIsMutating, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useCallback, useEffect, useEffectEvent, useMemo, useRef, useState } from "react";
-import { ChevronDownIcon, CloudUploadIcon, GitCommitIcon, InfoIcon } from "lucide-react";
+import {
+  ChevronDownIcon,
+  CloudUploadIcon,
+  GitCommitIcon,
+  InfoIcon,
+  MessageSquareTextIcon,
+} from "lucide-react";
 import { GitHubIcon } from "./Icons";
 import {
   buildGitActionProgressStages,
@@ -34,7 +40,7 @@ import {
   DialogTitle,
 } from "~/components/ui/dialog";
 import { Group, GroupSeparator } from "~/components/ui/group";
-import { Menu, MenuItem, MenuPopup, MenuTrigger } from "~/components/ui/menu";
+import { Menu, MenuItem, MenuPopup, MenuSeparator, MenuTrigger } from "~/components/ui/menu";
 import { Popover, PopoverPopup, PopoverTrigger } from "~/components/ui/popover";
 import { ScrollArea } from "~/components/ui/scroll-area";
 import { Textarea } from "~/components/ui/textarea";
@@ -59,6 +65,8 @@ interface GitActionsControlProps {
   gitCwd: string | null;
   activeThreadRef: ScopedThreadRef | null;
   draftId?: DraftId;
+  onImportReviewCommentsRequest?: () => void;
+  isImportingReviewComments?: boolean;
 }
 
 interface PendingDefaultBranchAction {
@@ -214,6 +222,8 @@ export default function GitActionsControl({
   gitCwd,
   activeThreadRef,
   draftId,
+  onImportReviewCommentsRequest,
+  isImportingReviewComments = false,
 }: GitActionsControlProps) {
   const activeEnvironmentId = activeThreadRef?.environmentId ?? null;
   const threadToastData = useMemo(
@@ -398,6 +408,20 @@ export default function GitActionsControl({
   const quickActionDisabledReason = quickAction.disabled
     ? (quickAction.hint ?? "This action is currently unavailable.")
     : null;
+  const reviewCommentsImportDisabled =
+    !onImportReviewCommentsRequest ||
+    isImportingReviewComments ||
+    isGitActionRunning ||
+    gitStatusForActions?.branch === null;
+  const reviewCommentsImportLabel = isImportingReviewComments
+    ? "Checking review comments..."
+    : gitStatusForActions?.pr?.state === "open"
+      ? `Import PR #${gitStatusForActions.pr.number} review comments`
+      : "Import review comments";
+  const reviewCommentsImportDescription =
+    gitStatusForActions?.pr?.state === "open"
+      ? "Add unresolved review feedback to the composer."
+      : "Find the branch PR and add review feedback to the composer.";
   const pendingDefaultBranchActionCopy = pendingDefaultBranchAction
     ? resolveDefaultBranchActionDialogCopy({
         action: pendingDefaultBranchAction.action,
@@ -974,6 +998,27 @@ export default function GitActionsControl({
                   Detached HEAD: create and checkout a branch to enable push and PR actions.
                 </p>
               )}
+              {onImportReviewCommentsRequest ? (
+                <>
+                  <MenuSeparator />
+                  <MenuItem
+                    disabled={reviewCommentsImportDisabled}
+                    onClick={() => {
+                      if (!reviewCommentsImportDisabled) {
+                        onImportReviewCommentsRequest();
+                      }
+                    }}
+                  >
+                    <MessageSquareTextIcon />
+                    <span className="flex min-w-0 flex-col">
+                      <span className="truncate">{reviewCommentsImportLabel}</span>
+                      <span className="truncate text-muted-foreground text-xs">
+                        {reviewCommentsImportDescription}
+                      </span>
+                    </span>
+                  </MenuItem>
+                </>
+              ) : null}
               {gitStatusForActions &&
                 gitStatusForActions.branch !== null &&
                 !gitStatusForActions.hasWorkingTreeChanges &&

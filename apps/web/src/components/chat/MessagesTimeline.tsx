@@ -81,6 +81,9 @@ interface TimelineRowSharedState {
   resolvedTheme: "light" | "dark";
   workspaceRoot: string | undefined;
   activeThreadEnvironmentId: EnvironmentId;
+  onAskAgentToFixError: (error: string) => void;
+  onCopyThreadError: (error: string) => void;
+  onDismissThreadError: () => void;
   onRevertUserMessage: (messageId: MessageId) => void;
   onImageExpand: (preview: ExpandedImagePreview) => void;
   onOpenTurnDiff: (turnId: TurnId, filePath?: string) => void;
@@ -113,6 +116,10 @@ interface MessagesTimelineProps {
   resolvedTheme: "light" | "dark";
   timestampFormat: TimestampFormat;
   workspaceRoot: string | undefined;
+  threadError?: string | null;
+  onAskAgentToFixError?: (error: string) => void;
+  onCopyThreadError?: (error: string) => void;
+  onDismissThreadError?: () => void;
   onIsAtEndChange: (isAtEnd: boolean) => void;
 }
 
@@ -141,6 +148,10 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   resolvedTheme,
   timestampFormat,
   workspaceRoot,
+  threadError,
+  onAskAgentToFixError = () => undefined,
+  onCopyThreadError = () => undefined,
+  onDismissThreadError = () => undefined,
   onIsAtEndChange,
 }: MessagesTimelineProps) {
   const rawRows = useMemo(
@@ -150,6 +161,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
         completionDividerBeforeEntryId,
         isWorking,
         activeTurnStartedAt,
+        ...(threadError !== undefined ? { threadError } : {}),
         turnDiffSummaryByAssistantMessageId,
         revertTurnCountByUserMessageId,
       }),
@@ -158,6 +170,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       completionDividerBeforeEntryId,
       isWorking,
       activeTurnStartedAt,
+      threadError,
       turnDiffSummaryByAssistantMessageId,
       revertTurnCountByUserMessageId,
     ],
@@ -204,6 +217,9 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       resolvedTheme,
       workspaceRoot,
       activeThreadEnvironmentId,
+      onAskAgentToFixError,
+      onCopyThreadError,
+      onDismissThreadError,
       onRevertUserMessage,
       onImageExpand,
       onOpenTurnDiff,
@@ -220,6 +236,9 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       resolvedTheme,
       workspaceRoot,
       activeThreadEnvironmentId,
+      onAskAgentToFixError,
+      onCopyThreadError,
+      onDismissThreadError,
       onRevertUserMessage,
       onImageExpand,
       onOpenTurnDiff,
@@ -456,6 +475,48 @@ function TimelineRowContent({ row }: { row: TimelineRow }) {
         </div>
       )}
 
+      {row.kind === "thread-error" && (
+        <div className="min-w-0 px-1 py-0.5">
+          <div className="rounded-xl border border-destructive/25 bg-destructive/5 px-3 py-3 text-sm">
+            <div className="flex items-start gap-2.5">
+              <CircleAlertIcon className="mt-0.5 size-4 shrink-0 text-destructive" />
+              <div className="min-w-0 flex-1">
+                <p className="font-medium text-foreground">Thread hit an error</p>
+                <p className="mt-1 line-clamp-4 whitespace-pre-wrap text-xs leading-relaxed text-muted-foreground">
+                  {row.error}
+                </p>
+                <div className="mt-3 flex flex-wrap gap-1.5">
+                  <Button
+                    type="button"
+                    size="xs"
+                    variant="outline"
+                    onClick={() => ctx.onAskAgentToFixError(row.error)}
+                  >
+                    Ask agent to fix
+                  </Button>
+                  <Button
+                    type="button"
+                    size="xs"
+                    variant="ghost"
+                    onClick={() => ctx.onCopyThreadError(row.error)}
+                  >
+                    Copy details
+                  </Button>
+                  <Button
+                    type="button"
+                    size="xs"
+                    variant="ghost"
+                    onClick={ctx.onDismissThreadError}
+                  >
+                    Dismiss
+                  </Button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {row.kind === "working" && (
         <div className="py-0.5 pl-1.5">
           <div className="flex items-center gap-2 pt-1 text-[11px] text-muted-foreground/70">
@@ -615,34 +676,39 @@ function AssistantChangedFilesSectionInner({
   resolvedTheme: "light" | "dark";
   onOpenTurnDiff: (turnId: TurnId, filePath?: string) => void;
 }) {
-  const allDirectoriesExpanded = useUiStateStore(
-    (store) => store.threadChangedFilesExpandedById[routeThreadKey]?.[turnSummary.turnId] ?? true,
+  const changedFilesExpanded = useUiStateStore(
+    (store) => store.threadChangedFilesExpandedById[routeThreadKey]?.[turnSummary.turnId] ?? false,
   );
   const setExpanded = useUiStateStore((store) => store.setThreadChangedFilesExpanded);
   const summaryStat = summarizeTurnDiffStats(checkpointFiles);
   const changedFileCountLabel = String(checkpointFiles.length);
 
   return (
-    <div className="mt-2 rounded-lg border border-border/80 bg-card/45 p-2.5">
-      <div className="mb-1.5 flex items-center justify-between gap-2">
-        <p className="text-[10px] uppercase tracking-[0.12em] text-muted-foreground/65">
+    <div className="mt-2 rounded-lg border border-border/70 bg-card/35 px-2.5 py-2">
+      <div className="flex items-center justify-between gap-2">
+        <button
+          type="button"
+          className="min-w-0 text-left text-[10px] uppercase tracking-[0.12em] text-muted-foreground/65 transition-colors hover:text-foreground/75"
+          data-scroll-anchor-ignore
+          onClick={() => setExpanded(routeThreadKey, turnSummary.turnId, !changedFilesExpanded)}
+        >
           <span>Changed files ({changedFileCountLabel})</span>
-          {hasNonZeroStat(summaryStat) && (
+          {hasNonZeroStat(summaryStat) ? (
             <>
               <span className="mx-1">•</span>
               <DiffStatLabel additions={summaryStat.additions} deletions={summaryStat.deletions} />
             </>
-          )}
-        </p>
+          ) : null}
+        </button>
         <div className="flex items-center gap-1.5">
           <Button
             type="button"
             size="xs"
-            variant="outline"
+            variant="ghost"
             data-scroll-anchor-ignore
-            onClick={() => setExpanded(routeThreadKey, turnSummary.turnId, !allDirectoriesExpanded)}
+            onClick={() => setExpanded(routeThreadKey, turnSummary.turnId, !changedFilesExpanded)}
           >
-            {allDirectoriesExpanded ? "Collapse all" : "Expand all"}
+            {changedFilesExpanded ? "Hide files" : "Show files"}
           </Button>
           <Button
             type="button"
@@ -654,14 +720,18 @@ function AssistantChangedFilesSectionInner({
           </Button>
         </div>
       </div>
-      <ChangedFilesTree
-        key={`changed-files-tree:${turnSummary.turnId}`}
-        turnId={turnSummary.turnId}
-        files={checkpointFiles}
-        allDirectoriesExpanded={allDirectoriesExpanded}
-        resolvedTheme={resolvedTheme}
-        onOpenTurnDiff={onOpenTurnDiff}
-      />
+      {changedFilesExpanded ? (
+        <div className="mt-2 border-border/60 border-t pt-2">
+          <ChangedFilesTree
+            key={`changed-files-tree:${turnSummary.turnId}`}
+            turnId={turnSummary.turnId}
+            files={checkpointFiles}
+            allDirectoriesExpanded
+            resolvedTheme={resolvedTheme}
+            onOpenTurnDiff={onOpenTurnDiff}
+          />
+        </div>
+      ) : null}
     </div>
   );
 }

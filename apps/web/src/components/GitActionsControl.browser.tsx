@@ -22,6 +22,24 @@ function createDeferredPromise<T>() {
   return { promise, resolve, reject };
 }
 
+async function waitFor(assertion: () => void, timeoutMs = 1_000): Promise<void> {
+  const startedAt = Date.now();
+  let lastError: unknown;
+  while (Date.now() - startedAt < timeoutMs) {
+    try {
+      assertion();
+      return;
+    } catch (error) {
+      lastError = error;
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+  }
+  if (lastError instanceof Error) {
+    throw lastError;
+  }
+  throw new Error("Timed out waiting for assertion.");
+}
+
 const {
   activeRunStackedActionDeferredRef,
   activeDraftThreadRef,
@@ -252,6 +270,14 @@ function findButtonByText(text: string): HTMLButtonElement | null {
   ) ?? null) as HTMLButtonElement | null;
 }
 
+function findMenuItemByText(text: string): HTMLElement | null {
+  return (
+    Array.from(document.querySelectorAll<HTMLElement>('[role="menuitem"]')).find((item) =>
+      item.textContent?.includes(text),
+    ) ?? null
+  );
+}
+
 function Harness() {
   const [activeThreadRef, setActiveThreadRef] = useState(
     scopeThreadRef(ENVIRONMENT_A, SHARED_THREAD_ID),
@@ -337,6 +363,44 @@ describe("GitActionsControl thread-scoped progress toast", () => {
       activeRunStackedActionDeferredRef.current.reject(new Error("test cleanup"));
       await Promise.resolve();
       vi.useRealTimers();
+      await screen.unmount();
+      host.remove();
+    }
+  });
+
+  it("places review comment import in the git action menu", async () => {
+    const onImportReviewCommentsRequest = vi.fn();
+    const host = document.createElement("div");
+    document.body.append(host);
+    const screen = await render(
+      <GitActionsControl
+        gitCwd={GIT_CWD}
+        activeThreadRef={scopeThreadRef(ENVIRONMENT_A, SHARED_THREAD_ID)}
+        onImportReviewCommentsRequest={onImportReviewCommentsRequest}
+      />,
+      {
+        container: host,
+      },
+    );
+
+    try {
+      const optionsButton = document.querySelector<HTMLButtonElement>(
+        'button[aria-label="Git action options"]',
+      );
+      expect(optionsButton, 'Unable to find button labelled "Git action options"').toBeTruthy();
+      if (!(optionsButton instanceof HTMLButtonElement)) {
+        throw new Error('Unable to find button labelled "Git action options"');
+      }
+      optionsButton.click();
+
+      await waitFor(() => {
+        expect(findMenuItemByText("Import review comments")).toBeTruthy();
+      });
+
+      findMenuItemByText("Import review comments")?.click();
+
+      expect(onImportReviewCommentsRequest).toHaveBeenCalledTimes(1);
+    } finally {
       await screen.unmount();
       host.remove();
     }

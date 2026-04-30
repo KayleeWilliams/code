@@ -205,6 +205,27 @@ describe("resolveAssistantMessageCopyState", () => {
 });
 
 describe("deriveMessagesTimelineRows", () => {
+  it("adds a thread error row after persisted timeline entries", () => {
+    const rows = deriveMessagesTimelineRows({
+      timelineEntries: [],
+      completionDividerBeforeEntryId: null,
+      isWorking: false,
+      activeTurnStartedAt: null,
+      threadError: "git fetch failed",
+      turnDiffSummaryByAssistantMessageId: new Map(),
+      revertTurnCountByUserMessageId: new Map(),
+    });
+
+    expect(rows).toEqual([
+      {
+        kind: "thread-error",
+        id: "thread-error:git fetch failed",
+        createdAt: "1970-01-01T00:00:00.000Z",
+        error: "git fetch failed",
+      },
+    ]);
+  });
+
   it("only enables assistant copy for the terminal assistant message in a turn", () => {
     const rows = deriveMessagesTimelineRows({
       timelineEntries: [

@@ -101,17 +101,19 @@ export const BranchToolbar = memo(function BranchToolbar({
         />
       </div>
 
-      <BranchToolbarBranchSelector
-        environmentId={environmentId}
-        threadId={threadId}
-        {...(draftId ? { draftId } : {})}
-        envLocked={envLocked}
-        {...(effectiveEnvModeOverride ? { effectiveEnvModeOverride } : {})}
-        {...(activeThreadBranchOverride !== undefined ? { activeThreadBranchOverride } : {})}
-        {...(onActiveThreadBranchOverrideChange ? { onActiveThreadBranchOverrideChange } : {})}
-        {...(onCheckoutPullRequestRequest ? { onCheckoutPullRequestRequest } : {})}
-        {...(onComposerFocusRequest ? { onComposerFocusRequest } : {})}
-      />
+      <div className="flex items-center gap-1">
+        <BranchToolbarBranchSelector
+          environmentId={environmentId}
+          threadId={threadId}
+          {...(draftId ? { draftId } : {})}
+          envLocked={envLocked}
+          {...(effectiveEnvModeOverride ? { effectiveEnvModeOverride } : {})}
+          {...(activeThreadBranchOverride !== undefined ? { activeThreadBranchOverride } : {})}
+          {...(onActiveThreadBranchOverrideChange ? { onActiveThreadBranchOverrideChange } : {})}
+          {...(onCheckoutPullRequestRequest ? { onCheckoutPullRequestRequest } : {})}
+          {...(onComposerFocusRequest ? { onComposerFocusRequest } : {})}
+        />
+      </div>
     </div>
   );
 });

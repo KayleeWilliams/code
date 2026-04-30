@@ -8,6 +8,8 @@ import type {
   GitCreateWorktreeInput,
   GitCreateWorktreeResult,
   GitInitInput,
+  GitListPullRequestReviewCommentsInput,
+  GitListPullRequestReviewCommentsResult,
   GitListBranchesInput,
   GitListBranchesResult,
   GitListWorktreesInput,
@@ -267,6 +269,9 @@ export interface EnvironmentApi {
     checkout: (input: GitCheckoutInput) => Promise<GitCheckoutResult>;
     init: (input: GitInitInput) => Promise<void>;
     resolvePullRequest: (input: GitPullRequestRefInput) => Promise<GitResolvePullRequestResult>;
+    listPullRequestReviewComments: (
+      input: GitListPullRequestReviewCommentsInput,
+    ) => Promise<GitListPullRequestReviewCommentsResult>;
     preparePullRequestThread: (
       input: GitPreparePullRequestThreadInput,
     ) => Promise<GitPreparePullRequestThreadResult>;

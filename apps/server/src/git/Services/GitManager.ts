@@ -8,6 +8,8 @@
  */
 import {
   GitActionProgressEvent,
+  GitListPullRequestReviewCommentsInput,
+  GitListPullRequestReviewCommentsResult,
   GitPreparePullRequestThreadInput,
   GitPreparePullRequestThreadResult,
   GitPullRequestRefInput,
@@ -78,6 +80,13 @@ export interface GitManagerShape {
   readonly resolvePullRequest: (
     input: GitPullRequestRefInput,
   ) => Effect.Effect<GitResolvePullRequestResult, GitManagerServiceError>;
+
+  /**
+   * List GitHub pull request review comments for import into a thread.
+   */
+  readonly listPullRequestReviewComments: (
+    input: GitListPullRequestReviewCommentsInput,
+  ) => Effect.Effect<GitListPullRequestReviewCommentsResult, GitManagerServiceError>;
 
   /**
    * Prepare a new thread workspace from a pull request in local or worktree mode.

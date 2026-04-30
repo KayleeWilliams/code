@@ -205,6 +205,76 @@ layer("GitHubCliLive", (it) => {
     }),
   );
 
+  it.effect("lists pull request review comments from gh api output", () =>
+    Effect.gen(function* () {
+      mockedRunProcess.mockResolvedValueOnce({
+        stdout: JSON.stringify([
+          {
+            id: 123,
+            html_url: "https://github.com/octocat/codething-mvp/pull/42#discussion_r123",
+            user: {
+              login: "reviewer",
+            },
+            body: "Please keep this branch name configurable.",
+            path: "apps/server/src/ws.ts",
+            line: 12,
+            original_line: 10,
+            side: "RIGHT",
+            state: "SUBMITTED",
+            created_at: "2026-04-29T12:00:00Z",
+            updated_at: "2026-04-29T12:30:00Z",
+          },
+          {
+            id: "empty-body",
+            html_url: "https://github.com/octocat/codething-mvp/pull/42#discussion_r124",
+            user: null,
+            body: "   ",
+            path: "README.md",
+            line: null,
+            side: "UNKNOWN",
+            state: null,
+            created_at: "2026-04-29T12:00:00Z",
+            updated_at: "2026-04-29T12:30:00Z",
+          },
+        ]),
+        stderr: "",
+        code: 0,
+        signal: null,
+        timedOut: false,
+      });
+
+      const result = yield* Effect.gen(function* () {
+        const gh = yield* GitHubCli;
+        return yield* gh.listPullRequestReviewComments({
+          cwd: "/repo",
+          repository: "octocat/codething-mvp",
+          number: 42,
+        });
+      });
+
+      assert.deepStrictEqual(result, [
+        {
+          id: "123",
+          url: "https://github.com/octocat/codething-mvp/pull/42#discussion_r123",
+          author: "reviewer",
+          body: "Please keep this branch name configurable.",
+          path: "apps/server/src/ws.ts",
+          line: 12,
+          side: "RIGHT",
+          state: "SUBMITTED",
+          createdAt: "2026-04-29T12:00:00Z",
+          updatedAt: "2026-04-29T12:30:00Z",
+          resolved: null,
+        },
+      ]);
+      expect(mockedRunProcess).toHaveBeenCalledWith(
+        "gh",
+        ["api", "repos/octocat/codething-mvp/pulls/42/comments", "--paginate"],
+        expect.objectContaining({ cwd: "/repo" }),
+      );
+    }),
+  );
+
   it.effect("surfaces a friendly error when the pull request is not found", () =>
     Effect.gen(function* () {
       mockedRunProcess.mockRejectedValueOnce(
