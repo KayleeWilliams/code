@@ -49,6 +49,11 @@ function makeSecretStorage(available: boolean): DesktopSecretStorage {
 }
 
 const clientSettings: ClientSettings = {
+  appearance: {
+    accent: "pink",
+    font: "custom",
+    customFontFamily: "Monocraft",
+  },
   autoOpenPlanSidebar: false,
   confirmThreadArchive: true,
   confirmThreadDelete: false,

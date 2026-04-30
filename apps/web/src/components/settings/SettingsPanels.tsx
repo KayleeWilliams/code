@@ -95,6 +95,20 @@ const TIMESTAMP_FORMAT_LABELS = {
   "24-hour": "24-hour",
 } as const;
 
+const APPEARANCE_ACCENT_LABELS = {
+  neutral: "Neutral",
+  pink: "Pink",
+  purple: "Purple",
+  rose: "Rose",
+} as const;
+
+const APPEARANCE_FONT_LABELS = {
+  default: "Default",
+  system: "System",
+  monocraft: "Monocraft",
+  custom: "Custom",
+} as const;
+
 const DEFAULT_DRIVER_KIND = ProviderDriverKind.make("codex");
 
 function withoutProviderInstanceKey<V>(
@@ -157,7 +171,7 @@ const PROVIDER_SETTINGS: readonly InstallProviderSettings[] = [
     binaryPlaceholder: "OpenCode binary path",
     binaryDescription: "Path to the OpenCode binary",
     serverUrlPlaceholder: "http://127.0.0.1:4096",
-    serverUrlDescription: "Leave blank to let T3 Code spawn the server when needed",
+    serverUrlDescription: "Leave blank to let Inth Code spawn the server when needed",
     serverPasswordPlaceholder: "Server password (optional)",
     serverPasswordDescription:
       "If your OpenCode server requires authentication, enter the password here. NOTE: Stored in plain text on disk",
@@ -442,6 +456,12 @@ export function useSettingsRestore(onRestored?: () => void) {
       ...(settings.defaultThreadEnvMode !== DEFAULT_UNIFIED_SETTINGS.defaultThreadEnvMode
         ? ["New thread mode"]
         : []),
+      ...(!Equal.equals(settings.workspaceDefaults, DEFAULT_UNIFIED_SETTINGS.workspaceDefaults)
+        ? ["Workspace defaults"]
+        : []),
+      ...(!Equal.equals(settings.appearance, DEFAULT_UNIFIED_SETTINGS.appearance)
+        ? ["Appearance"]
+        : []),
       ...(settings.addProjectBaseDirectory !== DEFAULT_UNIFIED_SETTINGS.addProjectBaseDirectory
         ? ["Add project base directory"]
         : []),
@@ -461,10 +481,12 @@ export function useSettingsRestore(onRestored?: () => void) {
       settings.confirmThreadArchive,
       settings.confirmThreadDelete,
       settings.addProjectBaseDirectory,
+      settings.appearance,
       settings.defaultThreadEnvMode,
       settings.diffWordWrap,
       settings.enableAssistantStreaming,
       settings.timestampFormat,
+      settings.workspaceDefaults,
       theme,
     ],
   );
@@ -839,7 +861,7 @@ export function GeneralSettingsPanel() {
       <SettingsSection title="General">
         <SettingsRow
           title="Theme"
-          description="Choose how T3 Code looks across the app."
+          description="Choose how Inth Code looks across the app."
           resetAction={
             theme !== "system" ? (
               <SettingResetButton label="theme" onClick={() => setTheme("system")} />
@@ -869,6 +891,129 @@ export function GeneralSettingsPanel() {
             </Select>
           }
         />
+
+        <SettingsRow
+          title="Accent"
+          description="Keep the app neutral by default, or add a restrained color accent."
+          resetAction={
+            settings.appearance.accent !== DEFAULT_UNIFIED_SETTINGS.appearance.accent ? (
+              <SettingResetButton
+                label="accent"
+                onClick={() =>
+                  updateSettings({
+                    appearance: {
+                      ...settings.appearance,
+                      accent: DEFAULT_UNIFIED_SETTINGS.appearance.accent,
+                    },
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Select
+              value={settings.appearance.accent}
+              onValueChange={(value) => {
+                if (
+                  value === "neutral" ||
+                  value === "pink" ||
+                  value === "purple" ||
+                  value === "rose"
+                ) {
+                  updateSettings({ appearance: { ...settings.appearance, accent: value } });
+                }
+              }}
+            >
+              <SelectTrigger className="w-full sm:w-40" aria-label="Accent color">
+                <SelectValue>{APPEARANCE_ACCENT_LABELS[settings.appearance.accent]}</SelectValue>
+              </SelectTrigger>
+              <SelectPopup align="end" alignItemWithTrigger={false}>
+                {Object.entries(APPEARANCE_ACCENT_LABELS).map(([value, label]) => (
+                  <SelectItem hideIndicator key={value} value={value}>
+                    {label}
+                  </SelectItem>
+                ))}
+              </SelectPopup>
+            </Select>
+          }
+        />
+
+        <SettingsRow
+          title="Font"
+          description="Choose your local interface font without changing team defaults."
+          resetAction={
+            !Equal.equals(settings.appearance, {
+              ...settings.appearance,
+              font: DEFAULT_UNIFIED_SETTINGS.appearance.font,
+              customFontFamily: DEFAULT_UNIFIED_SETTINGS.appearance.customFontFamily,
+            }) ? (
+              <SettingResetButton
+                label="font"
+                onClick={() =>
+                  updateSettings({
+                    appearance: {
+                      ...settings.appearance,
+                      font: DEFAULT_UNIFIED_SETTINGS.appearance.font,
+                      customFontFamily: DEFAULT_UNIFIED_SETTINGS.appearance.customFontFamily,
+                    },
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Select
+              value={settings.appearance.font}
+              onValueChange={(value) => {
+                if (
+                  value === "default" ||
+                  value === "system" ||
+                  value === "monocraft" ||
+                  value === "custom"
+                ) {
+                  updateSettings({ appearance: { ...settings.appearance, font: value } });
+                }
+              }}
+            >
+              <SelectTrigger className="w-full sm:w-40" aria-label="Interface font">
+                <SelectValue>{APPEARANCE_FONT_LABELS[settings.appearance.font]}</SelectValue>
+              </SelectTrigger>
+              <SelectPopup align="end" alignItemWithTrigger={false}>
+                {Object.entries(APPEARANCE_FONT_LABELS).map(([value, label]) => (
+                  <SelectItem hideIndicator key={value} value={value}>
+                    {label}
+                  </SelectItem>
+                ))}
+              </SelectPopup>
+            </Select>
+          }
+        >
+          {settings.appearance.font === "custom" ? (
+            <div className="mt-3">
+              <DraftInput
+                className="w-full"
+                value={settings.appearance.customFontFamily}
+                onCommit={(next) =>
+                  updateSettings({
+                    appearance: { ...settings.appearance, customFontFamily: next },
+                  })
+                }
+                placeholder='Example: "Berkeley Mono", ui-monospace'
+                spellCheck={false}
+                aria-label="Custom font family"
+              />
+            </div>
+          ) : null}
+          <div className="mt-3 rounded-lg border border-border/70 bg-background/70 p-3">
+            <p className="text-sm font-medium text-foreground">Chat preview</p>
+            <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
+              Clean controls, quiet surfaces, and a small accent where it earns attention.
+            </p>
+            <code className="mt-2 block rounded-md bg-muted px-2 py-1 text-[11px] text-foreground">
+              git fetch origin main
+            </code>
+          </div>
+        </SettingsRow>
 
         <SettingsRow
           title="Time format"
@@ -1054,6 +1199,155 @@ export function GeneralSettingsPanel() {
               placeholder="~/"
               spellCheck={false}
               aria-label="Add project base directory"
+            />
+          }
+        />
+
+        <SettingsRow
+          title="Worktree base ref"
+          description="New worktrees start from this ref."
+          resetAction={
+            settings.workspaceDefaults.worktreeBaseRef !==
+            DEFAULT_UNIFIED_SETTINGS.workspaceDefaults.worktreeBaseRef ? (
+              <SettingResetButton
+                label="worktree base ref"
+                onClick={() =>
+                  updateSettings({
+                    workspaceDefaults: {
+                      ...settings.workspaceDefaults,
+                      worktreeBaseRef: DEFAULT_UNIFIED_SETTINGS.workspaceDefaults.worktreeBaseRef,
+                    },
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <DraftInput
+              className="w-full sm:w-48"
+              value={settings.workspaceDefaults.worktreeBaseRef}
+              onCommit={(next) =>
+                updateSettings({
+                  workspaceDefaults: { ...settings.workspaceDefaults, worktreeBaseRef: next },
+                })
+              }
+              placeholder="origin/main"
+              spellCheck={false}
+              aria-label="Worktree base ref"
+            />
+          }
+        />
+
+        <SettingsRow
+          title="Worktree branch prefix"
+          description="Temporary branch names use this prefix before the agent renames them."
+          resetAction={
+            settings.workspaceDefaults.worktreeBranchPrefix !==
+            DEFAULT_UNIFIED_SETTINGS.workspaceDefaults.worktreeBranchPrefix ? (
+              <SettingResetButton
+                label="worktree branch prefix"
+                onClick={() =>
+                  updateSettings({
+                    workspaceDefaults: {
+                      ...settings.workspaceDefaults,
+                      worktreeBranchPrefix:
+                        DEFAULT_UNIFIED_SETTINGS.workspaceDefaults.worktreeBranchPrefix,
+                    },
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <DraftInput
+              className="w-full sm:w-40"
+              value={settings.workspaceDefaults.worktreeBranchPrefix}
+              onCommit={(next) =>
+                updateSettings({
+                  workspaceDefaults: {
+                    ...settings.workspaceDefaults,
+                    worktreeBranchPrefix: next,
+                  },
+                })
+              }
+              placeholder="work"
+              spellCheck={false}
+              aria-label="Worktree branch prefix"
+            />
+          }
+        />
+
+        <SettingsRow
+          title="Generated branch namespace"
+          description="Renamed agent branches use this namespace."
+          resetAction={
+            settings.workspaceDefaults.generatedBranchNamespace !==
+            DEFAULT_UNIFIED_SETTINGS.workspaceDefaults.generatedBranchNamespace ? (
+              <SettingResetButton
+                label="generated branch namespace"
+                onClick={() =>
+                  updateSettings({
+                    workspaceDefaults: {
+                      ...settings.workspaceDefaults,
+                      generatedBranchNamespace:
+                        DEFAULT_UNIFIED_SETTINGS.workspaceDefaults.generatedBranchNamespace,
+                    },
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <DraftInput
+              className="w-full sm:w-40"
+              value={settings.workspaceDefaults.generatedBranchNamespace}
+              onCommit={(next) =>
+                updateSettings({
+                  workspaceDefaults: {
+                    ...settings.workspaceDefaults,
+                    generatedBranchNamespace: next,
+                  },
+                })
+              }
+              placeholder="feature"
+              spellCheck={false}
+              aria-label="Generated branch namespace"
+            />
+          }
+        />
+
+        <SettingsRow
+          title="Fetch before worktree"
+          description="Refresh origin refs before creating a new worktree."
+          resetAction={
+            settings.workspaceDefaults.fetchBeforeWorktreeCreate !==
+            DEFAULT_UNIFIED_SETTINGS.workspaceDefaults.fetchBeforeWorktreeCreate ? (
+              <SettingResetButton
+                label="fetch before worktree"
+                onClick={() =>
+                  updateSettings({
+                    workspaceDefaults: {
+                      ...settings.workspaceDefaults,
+                      fetchBeforeWorktreeCreate:
+                        DEFAULT_UNIFIED_SETTINGS.workspaceDefaults.fetchBeforeWorktreeCreate,
+                    },
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Switch
+              checked={settings.workspaceDefaults.fetchBeforeWorktreeCreate}
+              onCheckedChange={(checked) =>
+                updateSettings({
+                  workspaceDefaults: {
+                    ...settings.workspaceDefaults,
+                    fetchBeforeWorktreeCreate: Boolean(checked),
+                  },
+                })
+              }
+              aria-label="Fetch before creating worktrees"
             />
           }
         />

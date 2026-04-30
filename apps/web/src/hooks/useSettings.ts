@@ -93,6 +93,27 @@ function persistClientSettings(settings: ClientSettings): void {
     });
 }
 
+function applyClientSettingsPatch(
+  current: ClientSettings,
+  patch: ClientSettingsPatch,
+): ClientSettings {
+  const next = {
+    ...current,
+    ...patch,
+  };
+  return {
+    ...next,
+    appearance: patch.appearance
+      ? {
+          accent: patch.appearance.accent ?? current.appearance.accent,
+          font: patch.appearance.font ?? current.appearance.font,
+          customFontFamily:
+            patch.appearance.customFontFamily ?? current.appearance.customFontFamily,
+        }
+      : current.appearance,
+  };
+}
+
 // ── Key sets for routing patches ─────────────────────────────────────
 
 const SERVER_SETTINGS_KEYS = new Set<string>(Struct.keys(ServerSettings.fields));
@@ -171,10 +192,7 @@ export function useUpdateSettings() {
     }
 
     if (Object.keys(clientPatch).length > 0) {
-      persistClientSettings({
-        ...getClientSettingsSnapshot(),
-        ...clientPatch,
-      });
+      persistClientSettings(applyClientSettingsPatch(getClientSettingsSnapshot(), clientPatch));
     }
   }, []);
 

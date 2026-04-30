@@ -28,7 +28,21 @@ export const SidebarProjectGroupingMode = Schema.Literals([
 export type SidebarProjectGroupingMode = typeof SidebarProjectGroupingMode.Type;
 export const DEFAULT_SIDEBAR_PROJECT_GROUPING_MODE: SidebarProjectGroupingMode = "repository";
 
+export const AppearanceAccent = Schema.Literals(["neutral", "pink", "purple", "rose"]);
+export type AppearanceAccent = typeof AppearanceAccent.Type;
+
+export const AppearanceFont = Schema.Literals(["default", "monocraft", "system", "custom"]);
+export type AppearanceFont = typeof AppearanceFont.Type;
+
+export const AppearanceSettings = Schema.Struct({
+  accent: AppearanceAccent.pipe(Schema.withDecodingDefault(Effect.succeed("neutral" as const))),
+  font: AppearanceFont.pipe(Schema.withDecodingDefault(Effect.succeed("default" as const))),
+  customFontFamily: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
+}).pipe(Schema.withDecodingDefault(Effect.succeed({})));
+export type AppearanceSettings = typeof AppearanceSettings.Type;
+
 export const ClientSettingsSchema = Schema.Struct({
+  appearance: AppearanceSettings,
   autoOpenPlanSidebar: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   confirmThreadArchive: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   confirmThreadDelete: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
@@ -136,12 +150,23 @@ export const ObservabilitySettings = Schema.Struct({
 });
 export type ObservabilitySettings = typeof ObservabilitySettings.Type;
 
+export const WorkspaceDefaultsSettings = Schema.Struct({
+  worktreeBaseRef: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed("origin/main"))),
+  worktreeBranchPrefix: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed("work"))),
+  generatedBranchNamespace: TrimmedString.pipe(
+    Schema.withDecodingDefault(Effect.succeed("feature")),
+  ),
+  fetchBeforeWorktreeCreate: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+}).pipe(Schema.withDecodingDefault(Effect.succeed({})));
+export type WorkspaceDefaultsSettings = typeof WorkspaceDefaultsSettings.Type;
+
 export const ServerSettings = Schema.Struct({
   enableAssistantStreaming: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   defaultThreadEnvMode: ThreadEnvMode.pipe(
     Schema.withDecodingDefault(Effect.succeed("local" as const satisfies ThreadEnvMode)),
   ),
   addProjectBaseDirectory: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
+  workspaceDefaults: WorkspaceDefaultsSettings,
   textGenerationModelSelection: ModelSelection.pipe(
     Schema.withDecodingDefault(
       Effect.succeed({
@@ -242,6 +267,14 @@ export const ServerSettingsPatch = Schema.Struct({
   enableAssistantStreaming: Schema.optionalKey(Schema.Boolean),
   defaultThreadEnvMode: Schema.optionalKey(ThreadEnvMode),
   addProjectBaseDirectory: Schema.optionalKey(Schema.String),
+  workspaceDefaults: Schema.optionalKey(
+    Schema.Struct({
+      worktreeBaseRef: Schema.optionalKey(Schema.String),
+      worktreeBranchPrefix: Schema.optionalKey(Schema.String),
+      generatedBranchNamespace: Schema.optionalKey(Schema.String),
+      fetchBeforeWorktreeCreate: Schema.optionalKey(Schema.Boolean),
+    }),
+  ),
   textGenerationModelSelection: Schema.optionalKey(ModelSelectionPatch),
   observability: Schema.optionalKey(
     Schema.Struct({
@@ -266,6 +299,13 @@ export const ServerSettingsPatch = Schema.Struct({
 export type ServerSettingsPatch = typeof ServerSettingsPatch.Type;
 
 export const ClientSettingsPatch = Schema.Struct({
+  appearance: Schema.optionalKey(
+    Schema.Struct({
+      accent: Schema.optionalKey(AppearanceAccent),
+      font: Schema.optionalKey(AppearanceFont),
+      customFontFamily: Schema.optionalKey(Schema.String),
+    }),
+  ),
   autoOpenPlanSidebar: Schema.optionalKey(Schema.Boolean),
   confirmThreadArchive: Schema.optionalKey(Schema.Boolean),
   confirmThreadDelete: Schema.optionalKey(Schema.Boolean),
