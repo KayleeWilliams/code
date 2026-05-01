@@ -11,7 +11,11 @@ import {
   type RuntimeMode,
   type TurnId,
 } from "@t3tools/contracts";
-import { buildGeneratedWorktreeBranchName, isTemporaryWorktreeBranch } from "@t3tools/shared/git";
+import {
+  buildGeneratedWorktreeBranchName,
+  isTemporaryWorktreeBranch,
+  resolveWorktreeBranchPrefix,
+} from "@t3tools/shared/git";
 import { Cache, Cause, Duration, Effect, Equal, Layer, Option, Schema, Stream } from "effect";
 import { makeDrainableWorker } from "@t3tools/shared/DrainableWorker";
 
@@ -537,13 +541,21 @@ const make = Effect.gen(function* () {
     readonly branch: string | null;
     readonly worktreePath: string | null;
     readonly messageText: string;
+    readonly repositoryOwner?: string | null;
     readonly attachments?: ReadonlyArray<ChatAttachment>;
   }) {
     if (!input.branch || !input.worktreePath) {
       return;
     }
     const { workspaceDefaults } = yield* serverSettingsService.getSettings;
-    if (!isTemporaryWorktreeBranch(input.branch, workspaceDefaults.worktreeBranchPrefix)) {
+    const worktreeBranchPrefix = resolveWorktreeBranchPrefix({
+      configuredPrefix: workspaceDefaults.worktreeBranchPrefix,
+      repositoryOwner: input.repositoryOwner,
+    });
+    if (
+      !isTemporaryWorktreeBranch(input.branch, worktreeBranchPrefix) &&
+      !isTemporaryWorktreeBranch(input.branch, workspaceDefaults.worktreeBranchPrefix)
+    ) {
       return;
     }
 
@@ -663,11 +675,13 @@ const make = Effect.gen(function* () {
     const isFirstUserMessageTurn =
       thread.messages.filter((entry) => entry.role === "user").length === 1;
     if (isFirstUserMessageTurn) {
+      const readModel = yield* orchestrationEngine.getReadModel();
       const generationCwd =
         resolveThreadWorkspaceCwd({
           thread,
-          projects: (yield* orchestrationEngine.getReadModel()).projects,
+          projects: readModel.projects,
         }) ?? process.cwd();
+      const project = readModel.projects.find((entry) => entry.id === thread.projectId);
       const generationInput = {
         messageText: message.text,
         ...(message.attachments !== undefined ? { attachments: message.attachments } : {}),
@@ -678,6 +692,7 @@ const make = Effect.gen(function* () {
         threadId: event.payload.threadId,
         branch: thread.branch,
         worktreePath: thread.worktreePath,
+        repositoryOwner: project?.repositoryIdentity?.owner ?? null,
         ...generationInput,
       }).pipe(Effect.forkScoped);
 

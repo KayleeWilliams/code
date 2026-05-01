@@ -1240,7 +1240,7 @@ export function GeneralSettingsPanel() {
 
         <SettingsRow
           title="Worktree branch prefix"
-          description="Temporary branch names use this prefix before the agent renames them."
+          description="Temporary branches use the repository owner by default, or this custom prefix before the agent renames them."
           resetAction={
             settings.workspaceDefaults.worktreeBranchPrefix !==
             DEFAULT_UNIFIED_SETTINGS.workspaceDefaults.worktreeBranchPrefix ? (

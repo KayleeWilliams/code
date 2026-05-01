@@ -78,7 +78,38 @@ export function sanitizeBranchNamespace(
 }
 
 export function sanitizeWorktreeBranchPrefix(raw: string | null | undefined): string {
-  return sanitizeBranchNamespace(raw ?? "", DEFAULT_WORKTREE_BRANCH_PREFIX);
+  const normalized = (raw ?? "")
+    .trim()
+    .replace(/^refs\/heads\//, "")
+    .replace(/['"`]/g, "")
+    .replace(/^[./\s_-]+|[./\s_-]+$/g, "");
+
+  if (normalized.length === 0) {
+    return DEFAULT_WORKTREE_BRANCH_PREFIX;
+  }
+
+  const prefix = normalized
+    .replace(/[^A-Za-z0-9/_-]+/g, "-")
+    .replace(/\/+/g, "/")
+    .replace(/-+/g, "-")
+    .replace(/^[./_-]+|[./_-]+$/g, "")
+    .slice(0, 64)
+    .replace(/[./_-]+$/g, "");
+
+  return prefix.length > 0 ? prefix : DEFAULT_WORKTREE_BRANCH_PREFIX;
+}
+
+export function resolveWorktreeBranchPrefix(input: {
+  readonly configuredPrefix: string | null | undefined;
+  readonly repositoryOwner?: string | null | undefined;
+}): string {
+  const configuredPrefix = sanitizeWorktreeBranchPrefix(input.configuredPrefix);
+  if (configuredPrefix !== DEFAULT_WORKTREE_BRANCH_PREFIX) {
+    return configuredPrefix;
+  }
+
+  const ownerPrefix = sanitizeWorktreeBranchPrefix(input.repositoryOwner);
+  return ownerPrefix !== DEFAULT_WORKTREE_BRANCH_PREFIX ? ownerPrefix : configuredPrefix;
 }
 
 const AUTO_FEATURE_BRANCH_FALLBACK = "feature/update";

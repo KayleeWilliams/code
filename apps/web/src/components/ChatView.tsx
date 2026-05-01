@@ -98,7 +98,7 @@ import {
 import { useTheme } from "../hooks/useTheme";
 import { useTurnDiffSummaries } from "../hooks/useTurnDiffSummaries";
 import { useCommandPaletteStore } from "../commandPaletteStore";
-import { buildTemporaryWorktreeBranchName } from "@t3tools/shared/git";
+import { buildTemporaryWorktreeBranchName, resolveWorktreeBranchPrefix } from "@t3tools/shared/git";
 import { useMediaQuery } from "../hooks/useMediaQuery";
 import { RIGHT_PANEL_INLINE_LAYOUT_MEDIA_QUERY } from "../rightPanelLayout";
 import { BranchToolbar } from "./BranchToolbar";
@@ -2651,7 +2651,10 @@ export default function ChatView(props: ChatViewProps) {
                       projectCwd: activeProject.cwd,
                       baseBranch: baseBranchForWorktree,
                       branch: buildTemporaryWorktreeBranchName(
-                        settings.workspaceDefaults.worktreeBranchPrefix,
+                        resolveWorktreeBranchPrefix({
+                          configuredPrefix: settings.workspaceDefaults.worktreeBranchPrefix,
+                          repositoryOwner: activeProject.repositoryIdentity?.owner,
+                        }),
                       ),
                     },
                     runSetupScript: true,
