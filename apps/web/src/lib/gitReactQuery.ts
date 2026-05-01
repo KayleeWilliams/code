@@ -16,6 +16,7 @@ import { requireEnvironmentConnection } from "../environments/runtime";
 const GIT_BRANCHES_STALE_TIME_MS = 15_000;
 const GIT_BRANCHES_REFETCH_INTERVAL_MS = 60_000;
 const GIT_WORKTREES_STALE_TIME_MS = 10_000;
+const GIT_PULL_REQUEST_REVIEW_COMMENTS_STALE_TIME_MS = 30_000;
 const GIT_BRANCHES_PAGE_SIZE = 100;
 
 export const gitQueryKeys = {
@@ -26,6 +27,11 @@ export const gitQueryKeys = {
     ["git", "worktrees", environmentId ?? null, cwd] as const,
   branchSearch: (environmentId: EnvironmentId | null, cwd: string | null, query: string) =>
     ["git", "branches", environmentId ?? null, cwd, "search", query] as const,
+  pullRequestReviewComments: (
+    environmentId: EnvironmentId | null,
+    cwd: string | null,
+    reference: string | null,
+  ) => ["git", "pull-request-review-comments", environmentId ?? null, cwd, reference] as const,
 };
 
 export const gitMutationKeys = {
@@ -124,6 +130,39 @@ export function gitResolvePullRequestQueryOptions(input: {
     staleTime: 30_000,
     refetchOnWindowFocus: false,
     refetchOnReconnect: false,
+  });
+}
+
+export function gitListPullRequestReviewCommentsQueryOptions(input: {
+  environmentId: EnvironmentId | null;
+  cwd: string | null;
+  reference: string | null;
+  enabled?: boolean;
+}) {
+  return queryOptions({
+    queryKey: gitQueryKeys.pullRequestReviewComments(
+      input.environmentId,
+      input.cwd,
+      input.reference,
+    ),
+    queryFn: async () => {
+      if (!input.cwd || !input.reference || !input.environmentId) {
+        throw new Error("Pull request review comments are unavailable.");
+      }
+      const api = ensureEnvironmentApi(input.environmentId);
+      return api.git.listPullRequestReviewComments({
+        cwd: input.cwd,
+        reference: input.reference,
+      });
+    },
+    enabled:
+      input.environmentId !== null &&
+      input.cwd !== null &&
+      input.reference !== null &&
+      (input.enabled ?? true),
+    staleTime: GIT_PULL_REQUEST_REVIEW_COMMENTS_STALE_TIME_MS,
+    refetchOnWindowFocus: true,
+    refetchOnReconnect: true,
   });
 }
 

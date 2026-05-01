@@ -1,5 +1,6 @@
 import {
   type EnvironmentId,
+  type GitHubPullRequestReviewComment,
   isProviderDriverKind,
   ProjectId,
   type ModelSelection,
@@ -20,9 +21,92 @@ import {
 import type { DraftThreadEnvMode } from "../composerDraftStore";
 
 export const LAST_INVOKED_SCRIPT_BY_PROJECT_KEY = "t3code:last-invoked-script-by-project";
+export const REVIEW_COMMENTS_IMPORT_STORAGE_KEY = "t3code:review-comments-imports:v1";
 export const MAX_HIDDEN_MOUNTED_TERMINAL_THREADS = 10;
+export const MAX_REVIEW_COMMENTS_IMPORT_REGISTRY_ENTRIES = 200;
 
 export const LastInvokedScriptByProjectSchema = Schema.Record(ProjectId, Schema.String);
+
+export const ReviewCommentsImportRegistryEntrySchema = Schema.Struct({
+  importedCommentIds: Schema.Array(Schema.String),
+  updatedAt: Schema.String,
+});
+export type ReviewCommentsImportRegistryEntry = typeof ReviewCommentsImportRegistryEntrySchema.Type;
+
+export const ReviewCommentsImportRegistrySchema = Schema.Struct({
+  version: Schema.Literal(1),
+  entries: Schema.Record(Schema.String, ReviewCommentsImportRegistryEntrySchema),
+});
+export type ReviewCommentsImportRegistry = typeof ReviewCommentsImportRegistrySchema.Type;
+
+export const EMPTY_REVIEW_COMMENTS_IMPORT_REGISTRY: ReviewCommentsImportRegistry = {
+  version: 1,
+  entries: {},
+};
+
+export function buildReviewCommentsImportRegistryKey(input: {
+  environmentId: EnvironmentId;
+  threadId: ThreadId;
+  pullRequestUrl: string;
+}): string {
+  return `${input.environmentId}:${input.threadId}:${input.pullRequestUrl}`;
+}
+
+export function selectNewReviewComments(
+  comments: readonly GitHubPullRequestReviewComment[],
+  importedCommentIds: ReadonlySet<string>,
+): GitHubPullRequestReviewComment[] {
+  return comments.filter((comment) => !importedCommentIds.has(comment.id));
+}
+
+export function selectDefaultReviewCommentsForImport(input: {
+  comments: readonly GitHubPullRequestReviewComment[];
+  importedCommentIds: ReadonlySet<string>;
+}): GitHubPullRequestReviewComment[] {
+  const newComments = selectNewReviewComments(input.comments, input.importedCommentIds);
+  const unresolvedNewComments = newComments.filter((comment) => comment.resolved === false);
+  if (unresolvedNewComments.length > 0) {
+    return unresolvedNewComments;
+  }
+  if (newComments.length > 0) {
+    return newComments;
+  }
+
+  const unresolvedComments = input.comments.filter((comment) => comment.resolved === false);
+  return unresolvedComments.length > 0 ? unresolvedComments : [...input.comments];
+}
+
+export function mergeImportedReviewCommentIds(input: {
+  registry: ReviewCommentsImportRegistry;
+  key: string;
+  commentIds: readonly string[];
+  updatedAt: string;
+  maxEntries?: number;
+}): ReviewCommentsImportRegistry {
+  const current = input.registry.entries[input.key];
+  const importedCommentIds = Array.from(
+    new Set([...(current?.importedCommentIds ?? []), ...input.commentIds]),
+  );
+  const entries = {
+    ...input.registry.entries,
+    [input.key]: {
+      importedCommentIds,
+      updatedAt: input.updatedAt,
+    },
+  };
+
+  const maxEntries = input.maxEntries ?? MAX_REVIEW_COMMENTS_IMPORT_REGISTRY_ENTRIES;
+  const retainedEntries = Object.fromEntries(
+    Object.entries(entries)
+      .toSorted(([, a], [, b]) => a.updatedAt.localeCompare(b.updatedAt))
+      .slice(-maxEntries),
+  );
+
+  return {
+    version: 1,
+    entries: retainedEntries,
+  };
+}
 
 export function buildLocalDraftThread(
   threadId: ThreadId,

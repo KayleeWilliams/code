@@ -36,6 +36,7 @@ import {
 import { projectScriptCwd, projectScriptRuntimeEnv } from "@t3tools/shared/projectScripts";
 import { truncate } from "@t3tools/shared/String";
 import { Debouncer } from "@tanstack/react-pacer";
+import { useQuery } from "@tanstack/react-query";
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useSearch } from "@tanstack/react-router";
 import { useShallow } from "zustand/react/shallow";
@@ -158,19 +159,27 @@ import {
   hasServerAcknowledgedLocalDispatch,
   LAST_INVOKED_SCRIPT_BY_PROJECT_KEY,
   LastInvokedScriptByProjectSchema,
+  EMPTY_REVIEW_COMMENTS_IMPORT_REGISTRY,
   type LocalDispatchSnapshot,
   PullRequestDialogState,
+  REVIEW_COMMENTS_IMPORT_STORAGE_KEY,
+  ReviewCommentsImportRegistrySchema,
   cloneComposerImageForRetry,
   deriveLockedProvider,
+  buildReviewCommentsImportRegistryKey,
   readFileAsDataUrl,
   reconcileMountedTerminalThreadIds,
+  mergeImportedReviewCommentIds,
   resolveSendEnvMode,
+  selectDefaultReviewCommentsForImport,
+  selectNewReviewComments,
   revokeBlobPreviewUrl,
   revokeUserMessagePreviewUrls,
   shouldWriteThreadErrorToCurrentServerThread,
   waitForStartedServerThread,
 } from "./ChatView.logic";
 import { useLocalStorage } from "~/hooks/useLocalStorage";
+import { gitListPullRequestReviewCommentsQueryOptions } from "~/lib/gitReactQuery";
 import { useComposerHandleContext } from "../composerHandleContext";
 import {
   useServerAvailableEditors,
@@ -203,6 +212,7 @@ type ThreadPlanCatalogEntry = Pick<Thread, "id" | "proposedPlans">;
 
 interface ReviewCommentsImportDialogState {
   pullRequestNumber: number;
+  importRegistryKey: string;
   comments: readonly GitHubPullRequestReviewComment[];
 }
 
@@ -730,6 +740,11 @@ export default function ChatView(props: ChatViewProps) {
     LAST_INVOKED_SCRIPT_BY_PROJECT_KEY,
     {},
     LastInvokedScriptByProjectSchema,
+  );
+  const [reviewCommentsImportRegistry, setReviewCommentsImportRegistry] = useLocalStorage(
+    REVIEW_COMMENTS_IMPORT_STORAGE_KEY,
+    EMPTY_REVIEW_COMMENTS_IMPORT_REGISTRY,
+    ReviewCommentsImportRegistrySchema,
   );
   const legendListRef = useRef<LegendListRef | null>(null);
   const isAtEndRef = useRef(true);
@@ -2156,6 +2171,43 @@ export default function ChatView(props: ChatViewProps) {
     canOverrideServerThreadEnvMode && pendingServerThreadBranch !== undefined
       ? pendingServerThreadBranch
       : (activeThread?.branch ?? null);
+  const activeOpenPullRequest =
+    gitStatusQuery.data?.pr?.state === "open" ? gitStatusQuery.data.pr : null;
+  const reviewCommentsQuery = useQuery(
+    gitListPullRequestReviewCommentsQueryOptions({
+      environmentId,
+      cwd: gitCwd,
+      reference: activeThreadBranch,
+      enabled: Boolean(activeProject && activeOpenPullRequest),
+    }),
+  );
+  const reviewCommentsImportKey = useMemo(() => {
+    if (!reviewCommentsQuery.data || !activeThreadId) {
+      return null;
+    }
+    return buildReviewCommentsImportRegistryKey({
+      environmentId,
+      threadId: activeThreadId,
+      pullRequestUrl: reviewCommentsQuery.data.pullRequest.url,
+    });
+  }, [activeThreadId, environmentId, reviewCommentsQuery.data]);
+  const importedReviewCommentIds = useMemo(() => {
+    if (!reviewCommentsImportKey) {
+      return new Set<string>();
+    }
+    return new Set(
+      reviewCommentsImportRegistry.entries[reviewCommentsImportKey]?.importedCommentIds ?? [],
+    );
+  }, [reviewCommentsImportKey, reviewCommentsImportRegistry.entries]);
+  const newReviewComments = useMemo(
+    () =>
+      selectNewReviewComments(reviewCommentsQuery.data?.comments ?? [], importedReviewCommentIds),
+    [importedReviewCommentIds, reviewCommentsQuery.data?.comments],
+  );
+  const reviewCommentsTotalCount = reviewCommentsQuery.data?.comments.length ?? null;
+  const newReviewCommentsCount = newReviewComments.length;
+  const hasReviewComments = (reviewCommentsTotalCount ?? 0) > 0;
+  const hasNewReviewComments = newReviewCommentsCount > 0;
   const sendEnvMode = resolveSendEnvMode({
     requestedEnvMode: envMode,
     isGitRepo,
@@ -2832,9 +2884,19 @@ export default function ChatView(props: ChatViewProps) {
     setComposerDraftPrompt(composerDraftTarget, prompt);
     composerRef.current?.resetCursorState({ cursor: prompt.length });
     scheduleComposerFocus();
+    if (reviewCommentsDialogState) {
+      setReviewCommentsImportRegistry((current) =>
+        mergeImportedReviewCommentIds({
+          registry: current,
+          key: reviewCommentsDialogState.importRegistryKey,
+          commentIds: selectedReviewComments.map((comment) => comment.id),
+          updatedAt: new Date().toISOString(),
+        }),
+      );
+    }
     toastManager.add({
       type: "success",
-      title: "Review comments imported",
+      title: "Comments added",
       description: `${selectedReviewComments.length} comments added to the composer.`,
     });
     closeReviewCommentsDialog();
@@ -2842,41 +2904,49 @@ export default function ChatView(props: ChatViewProps) {
     closeReviewCommentsDialog,
     composerDraftTarget,
     formatReviewCommentsPrompt,
+    reviewCommentsDialogState,
     scheduleComposerFocus,
     selectedReviewComments,
     setComposerDraftPrompt,
+    setReviewCommentsImportRegistry,
   ]);
 
-  const onImportReviewComments = useCallback(() => {
-    if (!activeProject || !activeThreadBranch || isImportingReviewComments) {
-      return;
-    }
-    const api = readEnvironmentApi(environmentId);
-    if (!api) {
+  const onAddReviewComments = useCallback(() => {
+    if (!activeProject || !activeThreadBranch || !activeThreadId || isImportingReviewComments) {
       return;
     }
     setIsImportingReviewComments(true);
-    void api.git
-      .listPullRequestReviewComments({
-        cwd: activeProject.cwd,
-        reference: activeThreadBranch,
-      })
+    void reviewCommentsQuery
+      .refetch()
       .then((result) => {
-        if (result.comments.length === 0) {
+        if (!result.data) {
+          return;
+        }
+        if (result.data.comments.length === 0) {
           toastManager.add({
             type: "info",
             title: "No review comments found",
-            description: `No review comments were found for PR #${result.pullRequest.number}.`,
+            description: `No review comments were found for PR #${result.data.pullRequest.number}.`,
           });
           return;
         }
-        const unresolvedComments = result.comments.filter((comment) => comment.resolved === false);
-        const defaultSelection =
-          unresolvedComments.length > 0 ? unresolvedComments : result.comments;
+        const importRegistryKey = buildReviewCommentsImportRegistryKey({
+          environmentId,
+          threadId: activeThreadId,
+          pullRequestUrl: result.data.pullRequest.url,
+        });
+        const importedCommentIds = new Set(
+          reviewCommentsImportRegistry.entries[importRegistryKey]?.importedCommentIds ?? [],
+        );
+        const defaultSelection = selectDefaultReviewCommentsForImport({
+          comments: result.data.comments,
+          importedCommentIds,
+        });
         setSelectedReviewCommentIds(new Set(defaultSelection.map((comment) => comment.id)));
         setReviewCommentsDialogState({
-          pullRequestNumber: result.pullRequest.number,
-          comments: result.comments,
+          pullRequestNumber: result.data.pullRequest.number,
+          importRegistryKey,
+          comments: result.data.comments,
         });
       })
       .catch((error: unknown) => {
@@ -2896,6 +2966,8 @@ export default function ChatView(props: ChatViewProps) {
     activeThreadBranch,
     environmentId,
     isImportingReviewComments,
+    reviewCommentsImportRegistry.entries,
+    reviewCommentsQuery,
     setThreadError,
   ]);
 
@@ -3525,7 +3597,23 @@ export default function ChatView(props: ChatViewProps) {
           onToggleDiff={onToggleDiff}
           {...(activeThreadBranch && activeProject
             ? {
-                onImportReviewCommentsRequest: onImportReviewComments,
+                onAddReviewCommentsRequest: onAddReviewComments,
+                reviewCommentsActionState: {
+                  isChecking:
+                    reviewCommentsQuery.isLoading ||
+                    reviewCommentsQuery.isFetching ||
+                    isImportingReviewComments,
+                  hasComments: hasReviewComments,
+                  hasNewComments: hasNewReviewComments,
+                  totalCount: reviewCommentsTotalCount,
+                  newCount: newReviewCommentsCount,
+                  pullRequestNumber:
+                    reviewCommentsQuery.data?.pullRequest.number ??
+                    activeOpenPullRequest?.number ??
+                    null,
+                  error:
+                    reviewCommentsQuery.error instanceof Error ? reviewCommentsQuery.error : null,
+                },
                 isImportingReviewComments,
               }
             : {})}
@@ -3709,7 +3797,7 @@ export default function ChatView(props: ChatViewProps) {
             >
               <DialogPopup className="max-w-2xl">
                 <DialogHeader>
-                  <DialogTitle>Import review comments</DialogTitle>
+                  <DialogTitle>Add comments</DialogTitle>
                   <DialogDescription>
                     Select comments from PR #{reviewCommentsDialogState.pullRequestNumber}.
                   </DialogDescription>

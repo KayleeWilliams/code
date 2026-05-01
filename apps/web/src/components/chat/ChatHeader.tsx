@@ -41,7 +41,16 @@ interface ChatHeaderProps {
   onDeleteProjectScript: (scriptId: string) => Promise<void>;
   onToggleTerminal: () => void;
   onToggleDiff: () => void;
-  onImportReviewCommentsRequest?: () => void;
+  onAddReviewCommentsRequest?: () => void;
+  reviewCommentsActionState?: {
+    readonly isChecking: boolean;
+    readonly hasComments: boolean;
+    readonly hasNewComments: boolean;
+    readonly totalCount: number | null;
+    readonly newCount: number;
+    readonly pullRequestNumber: number | null;
+    readonly error: Error | null;
+  };
   isImportingReviewComments?: boolean;
 }
 
@@ -69,7 +78,8 @@ export const ChatHeader = memo(function ChatHeader({
   onDeleteProjectScript,
   onToggleTerminal,
   onToggleDiff,
-  onImportReviewCommentsRequest,
+  onAddReviewCommentsRequest,
+  reviewCommentsActionState,
   isImportingReviewComments = false,
 }: ChatHeaderProps) {
   return (
@@ -117,8 +127,8 @@ export const ChatHeader = memo(function ChatHeader({
             gitCwd={gitCwd}
             activeThreadRef={scopeThreadRef(activeThreadEnvironmentId, activeThreadId)}
             {...(draftId ? { draftId } : {})}
-            {...(onImportReviewCommentsRequest
-              ? { onImportReviewCommentsRequest, isImportingReviewComments }
+            {...(onAddReviewCommentsRequest
+              ? { onAddReviewCommentsRequest, reviewCommentsActionState, isImportingReviewComments }
               : {})}
           />
         )}

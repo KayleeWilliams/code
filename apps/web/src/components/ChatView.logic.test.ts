@@ -1,6 +1,7 @@
 import { scopeThreadRef } from "@t3tools/client-runtime";
 import {
   EnvironmentId,
+  type GitHubPullRequestReviewComment,
   ProjectId,
   ProviderDriverKind,
   ProviderInstanceId,
@@ -13,17 +14,140 @@ import { type Thread } from "../types";
 
 import {
   MAX_HIDDEN_MOUNTED_TERMINAL_THREADS,
+  buildReviewCommentsImportRegistryKey,
   buildExpiredTerminalContextToastCopy,
   createLocalDispatchSnapshot,
   deriveComposerSendState,
   hasServerAcknowledgedLocalDispatch,
+  mergeImportedReviewCommentIds,
   reconcileMountedTerminalThreadIds,
   resolveSendEnvMode,
+  selectDefaultReviewCommentsForImport,
+  selectNewReviewComments,
   shouldWriteThreadErrorToCurrentServerThread,
   waitForStartedServerThread,
 } from "./ChatView.logic";
 
 const localEnvironmentId = EnvironmentId.make("environment-local");
+
+function reviewComment(
+  id: string,
+  overrides: Partial<GitHubPullRequestReviewComment> = {},
+): GitHubPullRequestReviewComment {
+  return {
+    id,
+    url: `https://github.com/acme/repo/pull/1#discussion_r${id}`,
+    author: "reviewer",
+    body: `Comment ${id}`,
+    path: "src/file.ts",
+    line: 10,
+    side: "RIGHT",
+    state: "SUBMITTED",
+    createdAt: "2026-04-01T00:00:00.000Z",
+    updatedAt: "2026-04-01T00:00:00.000Z",
+    resolved: null,
+    ...overrides,
+  };
+}
+
+describe("review comment import tracking", () => {
+  it("builds storage keys from environment, thread, and PR URL", () => {
+    expect(
+      buildReviewCommentsImportRegistryKey({
+        environmentId: localEnvironmentId,
+        threadId: ThreadId.make("thread-1"),
+        pullRequestUrl: "https://github.com/acme/repo/pull/42",
+      }),
+    ).toBe("environment-local:thread-1:https://github.com/acme/repo/pull/42");
+  });
+
+  it("merges imported comment IDs", () => {
+    const registry = mergeImportedReviewCommentIds({
+      registry: {
+        version: 1,
+        entries: {
+          key: {
+            importedCommentIds: ["comment-1"],
+            updatedAt: "2026-04-01T00:00:00.000Z",
+          },
+        },
+      },
+      key: "key",
+      commentIds: ["comment-1", "comment-2"],
+      updatedAt: "2026-04-02T00:00:00.000Z",
+    });
+
+    expect(registry.entries.key?.importedCommentIds).toEqual(["comment-1", "comment-2"]);
+    expect(registry.entries.key?.updatedAt).toBe("2026-04-02T00:00:00.000Z");
+  });
+
+  it("prunes imported comment registry entries by updated time", () => {
+    const registry = mergeImportedReviewCommentIds({
+      registry: {
+        version: 1,
+        entries: {
+          oldest: { importedCommentIds: ["a"], updatedAt: "2026-04-01T00:00:00.000Z" },
+          middle: { importedCommentIds: ["b"], updatedAt: "2026-04-02T00:00:00.000Z" },
+        },
+      },
+      key: "newest",
+      commentIds: ["c"],
+      updatedAt: "2026-04-03T00:00:00.000Z",
+      maxEntries: 2,
+    });
+
+    expect(Object.keys(registry.entries).toSorted()).toEqual(["middle", "newest"]);
+  });
+
+  it("selects new comments by excluding imported IDs", () => {
+    const comments = [reviewComment("comment-1"), reviewComment("comment-2")];
+
+    expect(
+      selectNewReviewComments(comments, new Set(["comment-1"])).map((comment) => comment.id),
+    ).toEqual(["comment-2"]);
+  });
+
+  it("defaults selection to unresolved new comments first", () => {
+    const comments = [
+      reviewComment("imported-unresolved", { resolved: false }),
+      reviewComment("new-resolved", { resolved: true }),
+      reviewComment("new-unresolved", { resolved: false }),
+    ];
+
+    expect(
+      selectDefaultReviewCommentsForImport({
+        comments,
+        importedCommentIds: new Set(["imported-unresolved"]),
+      }).map((comment) => comment.id),
+    ).toEqual(["new-unresolved"]);
+  });
+
+  it("falls back from new comments to unresolved comments to all comments", () => {
+    const newResolved = [reviewComment("new-resolved", { resolved: true })];
+    expect(
+      selectDefaultReviewCommentsForImport({
+        comments: newResolved,
+        importedCommentIds: new Set(),
+      }).map((comment) => comment.id),
+    ).toEqual(["new-resolved"]);
+
+    const importedUnresolved = [reviewComment("imported-unresolved", { resolved: false })];
+    expect(
+      selectDefaultReviewCommentsForImport({
+        comments: importedUnresolved,
+        importedCommentIds: new Set(["imported-unresolved"]),
+      }).map((comment) => comment.id),
+    ).toEqual(["imported-unresolved"]);
+
+    const importedResolved = [reviewComment("imported-resolved", { resolved: true })];
+    expect(
+      selectDefaultReviewCommentsForImport({
+        comments: importedResolved,
+        importedCommentIds: new Set(["imported-resolved"]),
+      }).map((comment) => comment.id),
+    ).toEqual(["imported-resolved"]);
+  });
+});
 
 describe("deriveComposerSendState", () => {
   it("treats expired terminal pills as non-sendable content", () => {
