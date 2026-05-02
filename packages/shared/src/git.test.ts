@@ -10,6 +10,7 @@ import {
   normalizeGitRemoteUrl,
   parseGitWorktreePorcelain,
   parseGitHubRepositoryNameWithOwnerFromRemoteUrl,
+  resolveWorktreeBranchPrefix,
   sanitizeWorktreeBranchPrefix,
   WORKTREE_BRANCH_PREFIX,
 } from "./git.ts";
@@ -89,6 +90,24 @@ describe("isTemporaryWorktreeBranch", () => {
 
   it("keeps legacy t3code temporary branch recognition when a custom prefix is configured", () => {
     expect(isTemporaryWorktreeBranch(`${WORKTREE_BRANCH_PREFIX}/deadbeef`, "team")).toBe(true);
+  });
+
+  it("uses the repository owner when the configured prefix is still the default", () => {
+    expect(
+      resolveWorktreeBranchPrefix({
+        configuredPrefix: DEFAULT_WORKTREE_BRANCH_PREFIX,
+        repositoryOwner: "KayleeWilliams",
+      }),
+    ).toBe("KayleeWilliams");
+  });
+
+  it("keeps an explicit custom worktree branch prefix", () => {
+    expect(
+      resolveWorktreeBranchPrefix({
+        configuredPrefix: "team",
+        repositoryOwner: "KayleeWilliams",
+      }),
+    ).toBe("team");
   });
 });
 
