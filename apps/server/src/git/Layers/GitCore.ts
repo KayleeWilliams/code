@@ -23,7 +23,6 @@ import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import { GitCommandError, type GitBranch } from "@t3tools/contracts";
 import {
   dedupeRemoteBranchesWithLocalMatches,
-  isTemporaryWorktreeBranch,
   parseGitWorktreePorcelain,
 } from "@t3tools/shared/git";
 import { compactTraceAttributes } from "../../observability/Attributes.ts";
@@ -362,9 +361,6 @@ function shouldPublishLocalBranchInsteadOfConfiguredUpstream(input: {
     return false;
   }
   if (isSyntheticPullRequestWorktreeBranch(input.branch)) {
-    return false;
-  }
-  if (isTemporaryWorktreeBranch(input.branch)) {
     return false;
   }
   if (

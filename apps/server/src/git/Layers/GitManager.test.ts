@@ -1693,6 +1693,52 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
     }),
   );
 
+  it.effect("commit_push from a temporary worktree branch does not push to main", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      const remoteDir = yield* createBareRemote();
+      yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+      yield* runGit(repoDir, ["push", "-u", "origin", "main"]);
+      const originMainBefore = yield* runGit(remoteDir, ["rev-parse", "refs/heads/main"]).pipe(
+        Effect.map((result) => result.stdout.trim()),
+      );
+
+      const worktreeBranch = "work/deadbeef";
+      const worktreePath = path.join(repoDir, "..", `temp-worktree-${Date.now()}`);
+      yield* runGit(repoDir, ["worktree", "add", "-b", worktreeBranch, worktreePath, "main"]);
+      yield* runGit(worktreePath, ["branch", "--set-upstream-to", "origin/main"]);
+      fs.writeFileSync(path.join(worktreePath, "worktree-change.txt"), "worktree branch\n");
+
+      const { manager } = yield* makeManager();
+      const result = yield* runStackedAction(manager, {
+        cwd: worktreePath,
+        action: "commit_push",
+      });
+
+      expect(result.commit.status).toBe("created");
+      expect(result.push.status).toBe("pushed");
+      expect(result.push.branch).toBe(worktreeBranch);
+      expect(result.push.upstreamBranch).toBe(`origin/${worktreeBranch}`);
+      expect(result.push.setUpstream).toBe(true);
+      expect(
+        yield* runGit(worktreePath, ["rev-parse", "--abbrev-ref", "@{upstream}"]).pipe(
+          Effect.map((output) => output.stdout.trim()),
+        ),
+      ).toBe(`origin/${worktreeBranch}`);
+      expect(
+        yield* runGit(remoteDir, ["rev-parse", "refs/heads/main"]).pipe(
+          Effect.map((output) => output.stdout.trim()),
+        ),
+      ).toBe(originMainBefore);
+      expect(
+        yield* runGit(remoteDir, ["rev-parse", `refs/heads/${worktreeBranch}`]).pipe(
+          Effect.map((output) => output.stdout.trim()),
+        ),
+      ).toBe(result.commit.commitSha);
+    }),
+  );
+
   it.effect(
     "pushes and creates PR from a no-upstream branch when local commits are ahead of base",
     () =>
