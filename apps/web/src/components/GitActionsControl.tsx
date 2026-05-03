@@ -65,7 +65,16 @@ interface GitActionsControlProps {
   gitCwd: string | null;
   activeThreadRef: ScopedThreadRef | null;
   draftId?: DraftId;
-  onImportReviewCommentsRequest?: () => void;
+  onAddReviewCommentsRequest?: () => void;
+  reviewCommentsActionState?: {
+    readonly isChecking: boolean;
+    readonly hasComments: boolean;
+    readonly hasNewComments: boolean;
+    readonly totalCount: number | null;
+    readonly newCount: number;
+    readonly pullRequestNumber: number | null;
+    readonly error: Error | null;
+  };
   isImportingReviewComments?: boolean;
 }
 
@@ -205,6 +214,9 @@ function GitActionItemIcon({ icon }: { icon: GitActionIconName }) {
 
 function GitQuickActionIcon({ quickAction }: { quickAction: GitQuickAction }) {
   const iconClassName = "size-3.5";
+  if (quickAction.kind === "add_comments") {
+    return <MessageSquareTextIcon className={iconClassName} />;
+  }
   if (quickAction.kind === "open_pr") return <GitHubIcon className={iconClassName} />;
   if (quickAction.kind === "run_pull") return <InfoIcon className={iconClassName} />;
   if (quickAction.kind === "run_action") {
@@ -222,7 +234,8 @@ export default function GitActionsControl({
   gitCwd,
   activeThreadRef,
   draftId,
-  onImportReviewCommentsRequest,
+  onAddReviewCommentsRequest,
+  reviewCommentsActionState,
   isImportingReviewComments = false,
 }: GitActionsControlProps) {
   const activeEnvironmentId = activeThreadRef?.environmentId ?? null;
@@ -402,26 +415,49 @@ export default function GitActionsControl({
   );
   const quickAction = useMemo(
     () =>
-      resolveQuickAction(gitStatusForActions, isGitActionRunning, isDefaultBranch, hasOriginRemote),
-    [gitStatusForActions, hasOriginRemote, isDefaultBranch, isGitActionRunning],
+      resolveQuickAction(
+        gitStatusForActions,
+        isGitActionRunning,
+        isDefaultBranch,
+        hasOriginRemote,
+        {
+          hasNewReviewComments: reviewCommentsActionState?.hasNewComments ?? false,
+        },
+      ),
+    [
+      gitStatusForActions,
+      hasOriginRemote,
+      isDefaultBranch,
+      isGitActionRunning,
+      reviewCommentsActionState?.hasNewComments,
+    ],
   );
   const quickActionDisabledReason = quickAction.disabled
     ? (quickAction.hint ?? "This action is currently unavailable.")
     : null;
+  const isCheckingReviewComments =
+    isImportingReviewComments || reviewCommentsActionState?.isChecking === true;
   const reviewCommentsImportDisabled =
-    !onImportReviewCommentsRequest ||
-    isImportingReviewComments ||
+    !onAddReviewCommentsRequest ||
+    isCheckingReviewComments ||
     isGitActionRunning ||
-    gitStatusForActions?.branch === null;
-  const reviewCommentsImportLabel = isImportingReviewComments
-    ? "Checking review comments..."
-    : gitStatusForActions?.pr?.state === "open"
-      ? `Import PR #${gitStatusForActions.pr.number} review comments`
-      : "Import review comments";
-  const reviewCommentsImportDescription =
-    gitStatusForActions?.pr?.state === "open"
-      ? "Add unresolved review feedback to the composer."
-      : "Find the branch PR and add review feedback to the composer.";
+    gitStatusForActions?.branch === null ||
+    (reviewCommentsActionState?.pullRequestNumber === null && !reviewCommentsActionState.error) ||
+    (reviewCommentsActionState?.totalCount === 0 && !reviewCommentsActionState.error);
+  const reviewCommentsImportLabel = "Add comments";
+  const reviewCommentsImportDescription = isCheckingReviewComments
+    ? "Checking PR comments..."
+    : reviewCommentsActionState?.error
+      ? "Could not check comments. Click to retry."
+      : reviewCommentsActionState?.pullRequestNumber === null
+        ? "No open PR found for this branch."
+        : reviewCommentsActionState?.totalCount === 0
+          ? "No review comments found for this PR."
+          : reviewCommentsActionState && reviewCommentsActionState.newCount > 0
+            ? `${reviewCommentsActionState.newCount} new of ${reviewCommentsActionState.totalCount ?? reviewCommentsActionState.newCount} comments`
+            : reviewCommentsActionState?.totalCount
+              ? `${reviewCommentsActionState.totalCount} comments available`
+              : "Add PR review feedback to the composer.";
   const pendingDefaultBranchActionCopy = pendingDefaultBranchAction
     ? resolveDefaultBranchActionDialogCopy({
         action: pendingDefaultBranchAction.action,
@@ -784,6 +820,10 @@ export default function GitActionsControl({
   };
 
   const runQuickAction = () => {
+    if (quickAction.kind === "add_comments") {
+      onAddReviewCommentsRequest?.();
+      return;
+    }
     if (quickAction.kind === "open_pr") {
       void openExistingPr();
       return;
@@ -998,14 +1038,14 @@ export default function GitActionsControl({
                   Detached HEAD: create and checkout a branch to enable push and PR actions.
                 </p>
               )}
-              {onImportReviewCommentsRequest ? (
+              {onAddReviewCommentsRequest ? (
                 <>
                   <MenuSeparator />
                   <MenuItem
                     disabled={reviewCommentsImportDisabled}
                     onClick={() => {
                       if (!reviewCommentsImportDisabled) {
-                        onImportReviewCommentsRequest();
+                        onAddReviewCommentsRequest();
                       }
                     }}
                   >

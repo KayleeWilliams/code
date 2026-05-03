@@ -32,6 +32,26 @@ function status(overrides: Partial<GitStatusResult> = {}): GitStatusResult {
 }
 
 describe("when: branch is clean and has an open PR", () => {
+  it("resolveQuickAction prefers new review comments over the existing PR action", () => {
+    const quick = resolveQuickAction(
+      status({
+        pr: {
+          number: 10,
+          title: "Open PR",
+          url: "https://example.com/pr/10",
+          baseBranch: "main",
+          headBranch: "feature/test",
+          state: "open",
+        },
+      }),
+      false,
+      false,
+      true,
+      { hasNewReviewComments: true },
+    );
+    assert.deepInclude(quick, { kind: "add_comments", label: "Add comments", disabled: false });
+  });
+
   it("resolveQuickAction opens the existing PR", () => {
     const quick = resolveQuickAction(
       status({
@@ -93,7 +113,7 @@ describe("when: branch is clean and has an open PR", () => {
 
 describe("when: actions are busy", () => {
   it("resolveQuickAction returns running disabled state", () => {
-    const quick = resolveQuickAction(status(), true);
+    const quick = resolveQuickAction(status(), true, false, true, { hasNewReviewComments: true });
     assert.deepInclude(quick, {
       kind: "show_hint",
       label: "Commit",
@@ -151,6 +171,27 @@ describe("when: git status is unavailable", () => {
 });
 
 describe("when: branch is clean, ahead, and has an open PR", () => {
+  it("resolveQuickAction prefers new review comments over push", () => {
+    const quick = resolveQuickAction(
+      status({
+        aheadCount: 3,
+        pr: {
+          number: 13,
+          title: "Open PR",
+          url: "https://example.com/pr/13",
+          baseBranch: "main",
+          headBranch: "feature/test",
+          state: "open",
+        },
+      }),
+      false,
+      false,
+      true,
+      { hasNewReviewComments: true },
+    );
+    assert.deepInclude(quick, { kind: "add_comments", label: "Add comments", disabled: false });
+  });
+
   it("resolveQuickAction prefers push", () => {
     const quick = resolveQuickAction(
       status({

@@ -21,7 +21,7 @@ export interface GitActionMenuItem {
 export interface GitQuickAction {
   label: string;
   disabled: boolean;
-  kind: "run_action" | "run_pull" | "open_pr" | "show_hint";
+  kind: "run_action" | "run_pull" | "open_pr" | "show_hint" | "add_comments";
   action?: GitStackedAction;
   hint?: string;
 }
@@ -147,9 +147,18 @@ export function resolveQuickAction(
   isBusy: boolean,
   isDefaultBranch = false,
   hasOriginRemote = true,
+  reviewComments?: { hasNewReviewComments: boolean },
 ): GitQuickAction {
   if (isBusy) {
     return { label: "Commit", disabled: true, kind: "show_hint", hint: "Git action in progress." };
+  }
+
+  if (reviewComments?.hasNewReviewComments) {
+    return {
+      label: "Add comments",
+      disabled: false,
+      kind: "add_comments",
+    };
   }
 
   if (!gitStatus) {

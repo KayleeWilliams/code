@@ -368,15 +368,24 @@ describe("GitActionsControl thread-scoped progress toast", () => {
     }
   });
 
-  it("places review comment import in the git action menu", async () => {
-    const onImportReviewCommentsRequest = vi.fn();
+  it("places add comments in the git action menu", async () => {
+    const onAddReviewCommentsRequest = vi.fn();
     const host = document.createElement("div");
     document.body.append(host);
     const screen = await render(
       <GitActionsControl
         gitCwd={GIT_CWD}
         activeThreadRef={scopeThreadRef(ENVIRONMENT_A, SHARED_THREAD_ID)}
-        onImportReviewCommentsRequest={onImportReviewCommentsRequest}
+        onAddReviewCommentsRequest={onAddReviewCommentsRequest}
+        reviewCommentsActionState={{
+          isChecking: false,
+          hasComments: true,
+          hasNewComments: false,
+          totalCount: 2,
+          newCount: 0,
+          pullRequestNumber: 42,
+          error: null,
+        }}
       />,
       {
         container: host,
@@ -394,12 +403,100 @@ describe("GitActionsControl thread-scoped progress toast", () => {
       optionsButton.click();
 
       await waitFor(() => {
-        expect(findMenuItemByText("Import review comments")).toBeTruthy();
+        expect(findMenuItemByText("Add comments")).toBeTruthy();
       });
 
-      findMenuItemByText("Import review comments")?.click();
+      findMenuItemByText("Add comments")?.click();
 
-      expect(onImportReviewCommentsRequest).toHaveBeenCalledTimes(1);
+      expect(onAddReviewCommentsRequest).toHaveBeenCalledTimes(1);
+    } finally {
+      await screen.unmount();
+      host.remove();
+    }
+  });
+
+  it("disables add comments in the menu when checked PR comments are empty", async () => {
+    const onAddReviewCommentsRequest = vi.fn();
+    const host = document.createElement("div");
+    document.body.append(host);
+    const screen = await render(
+      <GitActionsControl
+        gitCwd={GIT_CWD}
+        activeThreadRef={scopeThreadRef(ENVIRONMENT_A, SHARED_THREAD_ID)}
+        onAddReviewCommentsRequest={onAddReviewCommentsRequest}
+        reviewCommentsActionState={{
+          isChecking: false,
+          hasComments: false,
+          hasNewComments: false,
+          totalCount: 0,
+          newCount: 0,
+          pullRequestNumber: 42,
+          error: null,
+        }}
+      />,
+      {
+        container: host,
+      },
+    );
+
+    try {
+      const optionsButton = document.querySelector<HTMLButtonElement>(
+        'button[aria-label="Git action options"]',
+      );
+      expect(optionsButton, 'Unable to find button labelled "Git action options"').toBeTruthy();
+      if (!(optionsButton instanceof HTMLButtonElement)) {
+        throw new Error('Unable to find button labelled "Git action options"');
+      }
+      optionsButton.click();
+
+      await waitFor(() => {
+        expect(findMenuItemByText("Add comments")).toBeTruthy();
+      });
+
+      const addCommentsItem = findMenuItemByText("Add comments");
+      expect(addCommentsItem?.hasAttribute("data-disabled")).toBe(true);
+      addCommentsItem?.click();
+
+      expect(onAddReviewCommentsRequest).not.toHaveBeenCalled();
+    } finally {
+      await screen.unmount();
+      host.remove();
+    }
+  });
+
+  it("uses add comments as the primary action when new comments exist", async () => {
+    const onAddReviewCommentsRequest = vi.fn();
+    const host = document.createElement("div");
+    document.body.append(host);
+    const screen = await render(
+      <GitActionsControl
+        gitCwd={GIT_CWD}
+        activeThreadRef={scopeThreadRef(ENVIRONMENT_A, SHARED_THREAD_ID)}
+        onAddReviewCommentsRequest={onAddReviewCommentsRequest}
+        reviewCommentsActionState={{
+          isChecking: false,
+          hasComments: true,
+          hasNewComments: true,
+          totalCount: 3,
+          newCount: 1,
+          pullRequestNumber: 42,
+          error: null,
+        }}
+      />,
+      {
+        container: host,
+      },
+    );
+
+    try {
+      const quickActionButton = findButtonByText("Add comments");
+      expect(quickActionButton, 'Unable to find button containing "Add comments"').toBeTruthy();
+      if (!(quickActionButton instanceof HTMLButtonElement)) {
+        throw new Error('Unable to find button containing "Add comments"');
+      }
+      quickActionButton.click();
+
+      expect(onAddReviewCommentsRequest).toHaveBeenCalledTimes(1);
     } finally {
       await screen.unmount();
       host.remove();
